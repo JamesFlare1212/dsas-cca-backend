@@ -1,0 +1,4 @@
+node_modules
+nkcs-engage.cookie.txt
+.env
+redis_data

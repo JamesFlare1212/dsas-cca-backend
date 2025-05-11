@@ -1,0 +1,34 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dsas-cca-backend
+    ports:
+      - "${PORT}:${PORT}"
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - redis
+    networks:
+      - cca_network
+
+  redis:
+    image: "redis:7.2-alpine"
+    container_name: dsas-cca-redis
+    command: redis-server --requirepass "dsas-cca"
+    volumes:
+      - ./redis_data:/data
+    restart: unless-stopped
+    networks:
+      - cca_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "dsas-cca", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  cca_network:
+    driver: bridge
