@@ -125,6 +125,8 @@ app.get('/', (_req: Request, res: Response) => {
     res.send('Welcome to the DSAS CCA API!<br/><br/>\
         API Endpoints:<br/>\
         GET /v1/activity/list<br/>\
+        GET /v1/activity/category<br/>\
+        GET /v1/activity/academicYear<br/>\
         GET /v1/activity/:activityId (ID must be 1-4 digits)<br/>\
         GET /v1/staffs');
 });
@@ -165,6 +167,90 @@ app.get('/v1/activity/list', async (_req: Request, res: Response) => {
     } catch (error) {
         logger.error('Error in /v1/activity/list endpoint:', error);
         res.status(500).json({ error: 'An internal server error occurred while generating activity list.' });
+    }
+});
+
+// Category endpoint
+app.get('/v1/activity/category', async (_req: Request, res: Response) => {
+    try {
+        logger.info('Request received for /v1/activity/category');
+        const activityKeys = await getAllActivityKeys();
+        const categoryMap: Record<string, number> = {};
+
+        if (!activityKeys || activityKeys.length === 0) {
+            logger.info('No activity keys found in Redis for categories.');
+            return res.json({});
+        }
+
+        // Fetch all activity data in parallel
+        const allActivityDataPromises = activityKeys.map(async (key) => {
+            const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
+            return getActivityData(activityId);
+        });
+
+        const allActivities = await Promise.all(allActivityDataPromises);
+
+        allActivities.forEach((activityData: ActivityData | null) => {
+            if (activityData && 
+                activityData.category && 
+                !activityData.error && 
+                activityData.source !== 'api-fetch-empty') {
+                if (categoryMap[activityData.category]) {
+                    categoryMap[activityData.category] = (categoryMap[activityData.category] ?? 0) + 1;
+                } else {
+                    categoryMap[activityData.category] = 1;
+                }
+            }
+        });
+
+        logger.info(`Returning list of ${Object.keys(categoryMap).length} categories.`);
+        res.json(categoryMap);
+
+    } catch (error) {
+        logger.error('Error in /v1/activity/category endpoint:', error);
+        res.status(500).json({ error: 'An internal server error occurred while generating category list.' });
+    }
+});
+
+// Academic Year endpoint
+app.get('/v1/activity/academicYear', async (_req: Request, res: Response) => {
+    try {
+        logger.info('Request received for /v1/activity/academicYear');
+        const activityKeys = await getAllActivityKeys();
+        const academicYearMap: Record<string, number> = {};
+
+        if (!activityKeys || activityKeys.length === 0) {
+            logger.info('No activity keys found in Redis for academic years.');
+            return res.json({});
+        }
+
+        // Fetch all activity data in parallel
+        const allActivityDataPromises = activityKeys.map(async (key) => {
+            const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
+            return getActivityData(activityId);
+        });
+
+        const allActivities = await Promise.all(allActivityDataPromises);
+
+        allActivities.forEach((activityData: ActivityData | null) => {
+            if (activityData && 
+                activityData.academicYear && 
+                !activityData.error && 
+                activityData.source !== 'api-fetch-empty') {
+                if (academicYearMap[activityData.academicYear]) {
+                    academicYearMap[activityData.academicYear] = (academicYearMap[activityData.academicYear] ?? 0) + 1;
+                } else {
+                    academicYearMap[activityData.academicYear] = 1;
+                }
+            }
+        });
+
+        logger.info(`Returning list of ${Object.keys(academicYearMap).length} academic years.`);
+        res.json(academicYearMap);
+
+    } catch (error) {
+        logger.error('Error in /v1/activity/academicYear endpoint:', error);
+        res.status(500).json({ error: 'An internal server error occurred while generating academic year list.' });
     }
 });
 
