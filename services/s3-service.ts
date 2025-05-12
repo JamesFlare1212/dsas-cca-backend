@@ -2,6 +2,7 @@
 import { S3Client } from "bun";
 import { v4 as uuidv4 } from 'uuid';
 import { config } from 'dotenv';
+import sharp from 'sharp';
 import { logger } from '../utils/logger';
 import { decodeBase64Image } from '../utils/image-processor';
 
@@ -36,7 +37,7 @@ if (S3_ACCESS_KEY_ID && S3_SECRET_ACCESS_KEY && BUCKET_NAME) {
 }
 
 /**
- * Uploads an image from a base64 string to S3.
+ * Uploads an image from a base64 string to S3, converting it to AVIF format.
  * @param base64Data - The base64 content (without the data URI prefix)
  * @param originalFormat - The image format (e.g., 'png', 'jpeg')
  * @param activityId - The activity ID, used for naming
@@ -57,19 +58,32 @@ export async function uploadImageFromBase64(
     }
 
     try {
+        // First decode the base64 image
         const imageBuffer = decodeBase64Image(base64Data);
-        const objectKey = `${PUBLIC_URL_FILE_PREFIX}/activity-${activityId}-${uuidv4()}.${originalFormat}`;
+        
+        // Convert to AVIF format with quality 80 using Sharp
+        const avifBuffer = await sharp(imageBuffer)
+            .avif({ 
+                quality: 80,
+                // You can add more AVIF options here if needed
+                // lossless: false,
+                // effort: 4,
+            })
+            .toBuffer();
+        
+        // Use .avif extension for the object key
+        const objectKey = `${PUBLIC_URL_FILE_PREFIX}/activity-${activityId}-${uuidv4()}.avif`;
         
         // Using Bun's S3Client file API
         const s3File = s3Client.file(objectKey);
         
-        await s3File.write(imageBuffer, {
-            type: `image/${originalFormat}`,
+        await s3File.write(avifBuffer, {
+            type: 'image/avif',
             acl: 'public-read'
         });
         
         const publicUrl = constructS3Url(objectKey);
-        logger.info(`Image uploaded to S3: ${publicUrl}`);
+        logger.info(`Image uploaded to S3 as AVIF: ${publicUrl}`);
         return publicUrl;
     } catch (error) {
         logger.error(`S3 Upload Error for activity ${activityId}:`, error);
