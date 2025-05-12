@@ -122,21 +122,47 @@ async function fetchProcessAndStoreActivity(activityId: string): Promise<Process
 
 // --- API Endpoints ---
 app.get('/', (_req: Request, res: Response) => {
-    res.send('Welcome to the DSAS CCA API!<br/><br/>\
-        API Endpoints:<br/>\
+    res.send('Welcome to the DSAS CCA API!<br/>\
         GET /v1/activity/list<br/>\
+        GET /v1/activity/list?category=<br/>\
+        GET /v1/activity/list?academicYear=<br/>\
+        GET /v1/activity/list?grade=<br/>\
         GET /v1/activity/category<br/>\
         GET /v1/activity/academicYear<br/>\
-        GET /v1/activity/:activityId (ID must be 1-4 digits)<br/>\
+        GET /v1/activity/:activityId<br/>\
         GET /v1/staffs');
 });
 
-// Activity list endpoint
-app.get('/v1/activity/list', async (_req: Request, res: Response) => {
+// Activity list endpoint with filtering capabilities
+app.get('/v1/activity/list', async (req: Request, res: Response) => {
     try {
-        logger.info('Request received for /v1/activity/list');
+        const category = req.query.category as string | undefined;
+        const academicYear = req.query.academicYear as string | undefined;
+        const grade = req.query.grade as string | undefined;
+        
+        // Validate academicYear format if provided (YYYY/YYYY)
+        if (academicYear !== undefined) {
+            const academicYearRegex = /^\d{4}\/\d{4}$/;
+            if (!academicYearRegex.test(academicYear)) {
+                return res.status(400).json({ error: 'Invalid academicYear format. Expected format: YYYY/YYYY' });
+            }
+        }
+        
+        // Validate grade if provided
+        let validGrade: number | null = null;
+        if (grade !== undefined) {
+            const parsedGrade = parseInt(grade, 10);
+            if (!isNaN(parsedGrade) && parsedGrade > 0 && parsedGrade <= 12) {
+                validGrade = parsedGrade;
+            } else {
+                return res.status(400).json({ error: 'Invalid grade parameter. Must be a number between 1 and 12.' });
+            }
+        }
+        
+        logger.info(`Request received for /v1/activity/list with filters: ${JSON.stringify({category, academicYear, grade: validGrade})}`);
+        
         const activityKeys = await getAllActivityKeys();
-        const clubList: Record<string, string> = {};
+        const clubList: Record<string, {name: string, photo: string}> = {};
 
         if (!activityKeys || activityKeys.length === 0) {
             logger.info('No activity keys found in Redis for list.');
@@ -150,18 +176,85 @@ app.get('/v1/activity/list', async (_req: Request, res: Response) => {
         });
 
         const allActivities = await Promise.all(allActivityDataPromises);
-
+        
+        // First pass: collect all available categories for validation
+        const availableCategories = new Set<string>();
+        const availableAcademicYears = new Set<string>();
+        
+        allActivities.forEach((activityData: ActivityData | null) => {
+            if (activityData && 
+                !activityData.error && 
+                activityData.source !== 'api-fetch-empty') {
+                if (activityData.category) {
+                    availableCategories.add(activityData.category);
+                }
+                if (activityData.academicYear) {
+                    availableAcademicYears.add(activityData.academicYear);
+                }
+            }
+        });
+        
+        // Validate category against available categories
+        if (category && !availableCategories.has(category)) {
+            return res.status(400).json({ 
+                error: 'Invalid category parameter. Category not found.',
+                availableCategories: Array.from(availableCategories)
+            });
+        }
+        
+        // Validate academicYear against available years
+        if (academicYear && !availableAcademicYears.has(academicYear)) {
+            return res.status(400).json({ 
+                error: 'Invalid academicYear parameter. Academic year not found.',
+                availableAcademicYears: Array.from(availableAcademicYears)
+            });
+        }
+        
+        // Apply filters and collect club data
         allActivities.forEach((activityData: ActivityData | null) => {
             if (activityData &&
                 activityData.id &&
                 activityData.name &&
                 !activityData.error &&
                 activityData.source !== 'api-fetch-empty') {
-                clubList[activityData.id] = activityData.name;
+                
+                // Check if it matches category filter if provided
+                if (category && activityData.category !== category) {
+                    return; // Skip this activity
+                }
+                
+                // Check if it matches academicYear filter if provided
+                if (academicYear && activityData.academicYear !== academicYear) {
+                    return; // Skip this activity
+                }
+                
+                // Check if it matches grade filter if provided
+                if (validGrade !== null) {
+                    // Skip if grades are null
+                    if (!activityData.grades || 
+                        activityData.grades.min === null || 
+                        activityData.grades.max === null) {
+                        return; // Skip this activity
+                    }
+                    
+                    const minGrade = parseInt(activityData.grades.min, 10);
+                    const maxGrade = parseInt(activityData.grades.max, 10);
+                    
+                    // Skip if grade is out of range or if parsing fails
+                    if (isNaN(minGrade) || isNaN(maxGrade) || validGrade < minGrade || validGrade > maxGrade) {
+                        return; // Skip this activity
+                    }
+                }
+                
+                // Add to result object with name and photo
+                clubList[activityData.id] = {
+                    name: activityData.name,
+                    photo: activityData.photo || ""
+                };
             }
         });
 
-        logger.info(`Returning list of ${Object.keys(clubList).length} valid clubs.`);
+        logger.info(`Returning list of ${Object.keys(clubList).length} valid clubs after filtering.`);
         res.json(clubList);
 
     } catch (error) {

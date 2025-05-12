@@ -1,7 +1,7 @@
 // src/models/activity.ts
 export interface ActivityData {
   // Include all common properties
-  id?: string | null;
+  id?: string | null | undefined;
   name?: string | null;
   description?: string | null;
   photo?: string | null | undefined;
