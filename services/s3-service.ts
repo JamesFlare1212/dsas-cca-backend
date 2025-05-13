@@ -3,6 +3,7 @@ import { S3Client } from "bun";
 import { v4 as uuidv4 } from 'uuid';
 import { config } from 'dotenv';
 import sharp from 'sharp';
+import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { decodeBase64Image } from '../utils/image-processor';
 
@@ -38,9 +39,10 @@ if (S3_ACCESS_KEY_ID && S3_SECRET_ACCESS_KEY && BUCKET_NAME) {
 
 /**
  * Uploads an image from a base64 string to S3, converting it to AVIF format.
+ * Uses MD5 checksum as filename and checks for duplicates before uploading.
  * @param base64Data - The base64 content (without the data URI prefix)
  * @param originalFormat - The image format (e.g., 'png', 'jpeg')
- * @param activityId - The activity ID, used for naming
+ * @param activityId - The activity ID, used for logging purposes
  * @returns The public URL of the uploaded image or null on error
  */
 export async function uploadImageFromBase64(
@@ -56,7 +58,6 @@ export async function uploadImageFromBase64(
     logger.error('S3 Upload: Missing base64Data, originalFormat, or activityId');
     return null;
   }
-
   try {
     // First decode the base64 image
     const imageBuffer = decodeBase64Image(base64Data);
@@ -69,18 +70,26 @@ export async function uploadImageFromBase64(
         // effort: 4,
       })
       .toBuffer();
-    // Use .avif extension for the object key
-    const objectKey = `${PUBLIC_URL_FILE_PREFIX}/activity-${activityId}-${uuidv4()}.avif`;
-    // Using Bun's S3Client file API
+    // Calculate MD5 checksum of the converted AVIF image
+    const md5Hash = crypto.createHash('md5').update(avifBuffer).digest('hex');
+    const objectKey = `${PUBLIC_URL_FILE_PREFIX}/${md5Hash}.avif`;
+    // Check if file with this checksum already exists
     const s3File = s3Client.file(objectKey);
+    const exists = await s3File.exists();
     
+    if (exists) {
+      const publicUrl = constructS3Url(objectKey);
+      logger.info(`Image already exists in S3 (MD5: ${md5Hash}), returning existing URL: ${publicUrl}`);
+      return publicUrl;
+    }
+    // File doesn't exist, proceed with upload
     await s3File.write(avifBuffer, {
       type: 'image/avif',
       acl: 'public-read'
     });
     
     const publicUrl = constructS3Url(objectKey);
-    logger.info(`Image uploaded to S3 as AVIF: ${publicUrl}`);
+    logger.info(`Image uploaded to S3 as AVIF (MD5: ${md5Hash}): ${publicUrl}`);
     return publicUrl;
   } catch (error) {
     logger.error(`S3 Upload Error for activity ${activityId}:`, error);
@@ -113,7 +122,6 @@ export async function listS3Objects(prefix: string): Promise<string[]> {
         startAfter,
         maxKeys: 1000
       });
-      
       if (result.contents) {
         // Add keys to our array, filtering out "directories"
         result.contents.forEach(item => {
@@ -126,14 +134,12 @@ export async function listS3Objects(prefix: string): Promise<string[]> {
           startAfter = result.contents[result.contents.length - 1]?.key;
         }
       }
-      
       isTruncated = result.isTruncated || false;
       // Safety check to prevent infinite loops
       if (result.contents?.length === 0) {
         break;
       }
     }
-    
     logger.info(`Listed ${objectKeys.length} object keys from S3 with prefix "${prefix}"`);
     return objectKeys;
   } catch (error) {
@@ -156,7 +162,6 @@ export async function deleteS3Objects(objectKeysArray: string[]): Promise<boolea
     logger.info('No objects to delete from S3.');
     return true;
   }
-
   try {
     // With Bun's S3Client, we need to delete objects one by one
     // Process in batches of 100 for better performance
@@ -180,7 +185,6 @@ export async function deleteS3Objects(objectKeysArray: string[]): Promise<boolea
         }
       }
     }
-    
     logger.info(`Deleted ${successCount} objects from S3. Failed: ${errorCount}`);
     return errorCount === 0; // True if all succeeded
   } catch (error) {

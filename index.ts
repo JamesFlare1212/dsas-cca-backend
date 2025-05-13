@@ -412,7 +412,7 @@ async function performBackgroundTasks(): Promise<void> {
   }
 }
 
-// --- Start Server and Background Tasks ---
+// Start Server and Background Tasks
 async function startServer(): Promise<void> {
   const redis = getRedisClient();
   if (!redis) {
