@@ -1,10 +1,10 @@
 // src/models/activity.ts
 export interface ActivityData {
   // Include all common properties
-  id?: string | null | undefined;
+  id?: string | null;
   name?: string | null;
   description?: string | null;
-  photo?: string | null | undefined;
+  photo?: string | null;
   academicYear?: string | null;
   category?: string | null;
   isPreSignup?: boolean | null;

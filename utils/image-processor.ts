@@ -24,29 +24,29 @@ interface ImageMarker {
  * @returns {ImageInfo|null} An object { base64Content: string, format: string } or null if not found.
  */
 export function extractBase64Image(dataUrl: string): ImageInfo | null {
-    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
-        return null;
-    }
-
-    const markers: ImageMarker[] = [
-        { prefix: "data:image/png;base64,", format: "png" },
-        { prefix: "data:image/jpeg;base64,", format: "jpeg" },
-        { prefix: "data:image/jpg;base64,", format: "jpg" },
-        { prefix: "data:image/gif;base64,", format: "gif" },
-        { prefix: "data:image/svg+xml;base64,", format: "svg" }, // svg+xml -> svg
-        { prefix: "data:image/webp;base64,", format: "webp" }
-    ];
-
-    for (const marker of markers) {
-        if (dataUrl.startsWith(marker.prefix)) {
-            const base64Content = dataUrl.substring(marker.prefix.length);
-            logger.debug(`Found image of format: ${marker.format}`);
-            return { base64Content, format: marker.format };
-        }
-    }
-
-    logger.warn("No known base64 image marker found in the provided data URL:", dataUrl.substring(0, 50) + "...");
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
     return null;
+  }
+
+  const markers: ImageMarker[] = [
+    { prefix: "data:image/png;base64,", format: "png" },
+    { prefix: "data:image/jpeg;base64,", format: "jpeg" },
+    { prefix: "data:image/jpg;base64,", format: "jpg" },
+    { prefix: "data:image/gif;base64,", format: "gif" },
+    { prefix: "data:image/svg+xml;base64,", format: "svg" }, // svg+xml -> svg
+    { prefix: "data:image/webp;base64,", format: "webp" }
+  ];
+
+  for (const marker of markers) {
+    if (dataUrl.startsWith(marker.prefix)) {
+      const base64Content = dataUrl.substring(marker.prefix.length);
+      logger.debug(`Found image of format: ${marker.format}`);
+      return { base64Content, format: marker.format };
+    }
+  }
+
+  logger.warn("No known base64 image marker found in the provided data URL:", dataUrl.substring(0, 50) + "...");
+  return null;
 }
 
 /**
@@ -56,8 +56,8 @@ export function extractBase64Image(dataUrl: string): ImageInfo | null {
  * @returns {Uint8Array} The decoded binary data
  */
 export function decodeBase64Image(base64String: string): Uint8Array {
-    // Bun uses Node.js Buffer API and has highly optimized Buffer operations
-    return Buffer.from(base64String, 'base64');
+  // Bun uses Node.js Buffer API and has highly optimized Buffer operations
+  return Buffer.from(base64String, 'base64');
 }
 
 /**
@@ -67,8 +67,8 @@ export function decodeBase64Image(base64String: string): Uint8Array {
  * @returns {Uint8Array|null} The decoded image data or null if invalid
  */
 export function dataUrlToBuffer(dataUrl: string): Uint8Array | null {
-    const imageInfo = extractBase64Image(dataUrl);
-    if (!imageInfo) return null;
-    
-    return decodeBase64Image(imageInfo.base64Content);
+  const imageInfo = extractBase64Image(dataUrl);
+  if (!imageInfo) return null;
+  
+  return decodeBase64Image(imageInfo.base64Content);
 }

@@ -1,21 +1,21 @@
-// ./engage-api/get-activity.ts
+// engage-api/get-activity.ts
 import axios from 'axios';
-import { readFile, writeFile, unlink } from 'fs/promises';
+import { readFile,writeFile,unlink } from 'fs/promises';
 import { resolve } from 'path';
 import { logger } from '../utils/logger';
 
 // Define interfaces for our data structures
 interface ActivityResponse {
   d: string;
-  isError?: boolean;
+  isError ? : boolean;
   [key: string]: any;
 }
 
-// --- Custom Error for Authentication ---
+// Custom Error for Authentication
 class AuthenticationError extends Error {
   status: number;
-  
-  constructor(message: string = "Authentication failed, cookie may be invalid.", status?: number) {
+
+  constructor(message: string = "Authentication failed, cookie may be invalid.", status ? : number) {
     super(message);
     this.name = "AuthenticationError";
     this.status = status || 0;
@@ -26,8 +26,8 @@ class AuthenticationError extends Error {
 const COOKIE_FILE_PATH = resolve(import.meta.dir, 'nkcs-engage.cookie.txt');
 let _inMemoryCookie: string | null = null;
 
-// --- Cookie Cache Helper Functions ---
-async function loadCachedCookie(): Promise<string | null> {
+// Cookie Cache Helper Functions
+async function loadCachedCookie(): Promise < string | null > {
   if (_inMemoryCookie) {
     logger.debug("Using in-memory cached cookie.");
     return _inMemoryCookie;
@@ -49,7 +49,7 @@ async function loadCachedCookie(): Promise<string | null> {
   return null;
 }
 
-async function saveCookieToCache(cookieString: string): Promise<void> {
+async function saveCookieToCache(cookieString: string): Promise < void > {
   if (!cookieString) {
     logger.warn("Attempted to save an empty or null cookie. Aborting save.");
     return;
@@ -63,7 +63,7 @@ async function saveCookieToCache(cookieString: string): Promise<void> {
   }
 }
 
-async function clearCookieCache(): Promise<void> {
+async function clearCookieCache(): Promise < void > {
   _inMemoryCookie = null;
   try {
     await unlink(COOKIE_FILE_PATH);
@@ -77,13 +77,13 @@ async function clearCookieCache(): Promise<void> {
   }
 }
 
-async function testCookieValidity(cookieString: string): Promise<boolean> {
+async function testCookieValidity(cookieString: string): Promise < boolean > {
   if (!cookieString) return false;
   logger.debug("Testing cookie validity...");
-  
+
   const MAX_RETRIES = 3;
   let attempt = 0;
-  
+
   while (attempt < MAX_RETRIES) {
     try {
       attempt++;
@@ -93,11 +93,16 @@ async function testCookieValidity(cookieString: string): Promise<boolean> {
         'Cookie': cookieString,
         'User-Agent': 'Mozilla/5.0 (Bun DSAS-CCA get-activity Module)',
       };
-      const payload = { "activityID": "3350" };
-      
+      const payload = {
+        "activityID": "3350"
+      };
+
       logger.debug(`Attempt ${attempt}/${MAX_RETRIES}`);
-      await axios.post(url, payload, { headers, timeout: 20000 });
-      
+      await axios.post(url, payload, {
+        headers,
+        timeout: 20000
+      });
+
       logger.debug("Cookie test successful (API responded 2xx). Cookie is valid.");
       return true;
     } catch (error: any) {
@@ -107,7 +112,7 @@ async function testCookieValidity(cookieString: string): Promise<boolean> {
       } else {
         logger.warn(`Network/other error: ${error.message}`);
       }
-      
+
       if (attempt >= MAX_RETRIES) {
         logger.warn("Max retries reached. Cookie is likely invalid or expired.");
         return false;
@@ -117,12 +122,14 @@ async function testCookieValidity(cookieString: string): Promise<boolean> {
   return false;
 }
 
-// --- Core API Interaction Functions ---
-async function getSessionId(): Promise<string | null> {
+// Core API Interaction Functions
+async function getSessionId(): Promise < string | null > {
   const url = 'https://engage.nkcswx.cn/Login.aspx';
   try {
     const response = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Bun DSAS-CCA get-activity Module)' }
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Bun DSAS-CCA get-activity Module)'
+      }
     });
     const setCookieHeader = response.headers['set-cookie'];
     if (setCookieHeader && setCookieHeader.length > 0) {
@@ -141,7 +148,7 @@ async function getSessionId(): Promise<string | null> {
   }
 }
 
-async function getMSAUTH(sessionId: string, userName: string, userPwd: string, templateFilePath: string): Promise<string | null> {
+async function getMSAUTH(sessionId: string, userName: string, userPwd: string, templateFilePath: string): Promise < string | null > {
   const url = 'https://engage.nkcswx.cn/Login.aspx';
   try {
     let templateData = await readFile(templateFilePath, 'utf8');
@@ -149,14 +156,14 @@ async function getMSAUTH(sessionId: string, userName: string, userPwd: string, t
       .replace('{{USERNAME}}', userName)
       .replace('{{PASSWORD}}', userPwd);
     const headers = {
-      'Content-Type': 'application/x-www-form-urlencoded', 
+      'Content-Type': 'application/x-www-form-urlencoded',
       'Cookie': sessionId,
       'User-Agent': 'Mozilla/5.0 (Bun DSAS-CCA get-activity Module)',
       'Referer': 'https://engage.nkcswx.cn/Login.aspx'
     };
     logger.debug('Getting .ASPXFORMSAUTH');
     const response = await axios.post(url, postData, {
-      headers, 
+      headers,
       maxRedirects: 0,
       validateStatus: (status) => status >= 200 && status < 400
     });
@@ -167,10 +174,10 @@ async function getMSAUTH(sessionId: string, userName: string, userPwd: string, t
       if (aspxAuthCookies.length > 0) {
         for (let i = aspxAuthCookies.length - 1; i >= 0; i--) {
           const cookieCandidateParts = aspxAuthCookies[i].split(';');
-          if (cookieCandidateParts.length > 0 && cookieCandidateParts[0] !== undefined) {  // Explicit check
+          if (cookieCandidateParts.length > 0 && cookieCandidateParts[0] !== undefined) { // Explicit check
             const firstPart = cookieCandidateParts[0].trim();
             if (firstPart.length > '.ASPXFORMSAUTH='.length && firstPart.substring('.ASPXFORMSAUTH='.length).length > 0) {
-              formsAuthCookieValue = firstPart; 
+              formsAuthCookieValue = firstPart;
               break;
             }
           }
@@ -191,37 +198,39 @@ async function getMSAUTH(sessionId: string, userName: string, userPwd: string, t
   }
 }
 
-async function getCompleteCookies(userName: string, userPwd: string, templateFilePath: string): Promise<string> {
+async function getCompleteCookies(userName: string, userPwd: string, templateFilePath: string): Promise < string > {
   logger.debug('Attempting to get complete cookie string (login process).');
   const sessionId = await getSessionId();
   if (!sessionId) throw new Error("Login failed: Could not obtain ASP.NET_SessionId.");
-  
+
   const msAuth = await getMSAUTH(sessionId, userName, userPwd, templateFilePath);
   if (!msAuth) throw new Error("Login failed: Could not obtain .ASPXFORMSAUTH cookie.");
-  
+
   return `${sessionId}; ${msAuth}`;
 }
 
 async function getActivityDetailsRaw(
-  activityId: string, 
-  cookies: string, 
-  maxRetries: number = 3, 
+  activityId: string,
+  cookies: string,
+  maxRetries: number = 3,
   timeoutMilliseconds: number = 20000
-): Promise<string | null> {
+): Promise < string | null > {
   const url = 'https://engage.nkcswx.cn/Services/ActivitiesService.asmx/GetActivityDetails';
   const headers = {
-    'Content-Type': 'application/json; charset=UTF-8', 
+    'Content-Type': 'application/json; charset=UTF-8',
     'Cookie': cookies,
     'User-Agent': 'Mozilla/5.0 (Bun DSAS-CCA get-activity Module)',
     'X-Requested-With': 'XMLHttpRequest'
   };
-  const payload = { "activityID": String(activityId) };
+  const payload = {
+    "activityID": String(activityId)
+  };
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       const response = await axios.post(url, payload, {
-        headers, 
-        timeout: timeoutMilliseconds, 
+        headers,
+        timeout: timeoutMilliseconds,
         responseType: 'text'
       });
       const outerData = JSON.parse(response.data);
@@ -242,12 +251,13 @@ async function getActivityDetailsRaw(
         throw new AuthenticationError(`Received ${error.response.status} for activity ${activityId}`, error.response.status);
       }
       logger.error(`Attempt ${attempt + 1}/${maxRetries} for activity ${activityId} failed: ${error.message}`);
+
       if (error.response) {
-         logger.error(`Status: ${error.response.status}, Data (getActivityDetailsRaw): ${ String(error.response.data).slice(0,100)}...`);
+        logger.error(`Status: ${error.response.status}, Data (getActivityDetailsRaw): ${ String(error.response.data).slice(0,100)}...`);
       }
       if (attempt === maxRetries - 1) {
-         logger.error(`All ${maxRetries} retries failed for activity ${activityId}.`);
-         throw error;
+        logger.error(`All ${maxRetries} retries failed for activity ${activityId}.`);
+        throw error;
       }
       await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
     }
@@ -265,14 +275,14 @@ async function getActivityDetailsRaw(
  * @returns The parsed JSON object of activity details, or null on failure.
  */
 export async function fetchActivityData(
-  activityId: string, 
-  userName: string, 
-  userPwd: string, 
-  templateFileName: string = "login_template.txt", 
+  activityId: string,
+  userName: string,
+  userPwd: string,
+  templateFileName: string = "login_template.txt",
   forceLogin: boolean = false
-): Promise<any | null> {
+): Promise < any | null > {
   let currentCookie = forceLogin ? null : await loadCachedCookie();
-  
+
   if (forceLogin && currentCookie) {
     await clearCookieCache();
     currentCookie = null;
@@ -304,7 +314,7 @@ export async function fetchActivityData(
     logger.error("Critical: No cookie available after login attempt. Cannot fetch activity data.");
     return null;
   }
-  
+
   try {
     const rawActivityDetailsString = await getActivityDetailsRaw(activityId, currentCookie);
     if (rawActivityDetailsString) {
@@ -316,13 +326,13 @@ export async function fetchActivityData(
   } catch (error) {
     if (error instanceof AuthenticationError) {
       logger.warn(`Initial fetch failed with AuthenticationError (Status: ${error.status}). Cookie was likely invalid. Attempting re-login and one retry.`);
-      await clearCookieCache(); 
+      await clearCookieCache();
 
       try {
         logger.info("Attempting re-login due to authentication failure...");
         currentCookie = await getCompleteCookies(userName, userPwd, resolve(import.meta.dir, templateFileName));
         await saveCookieToCache(currentCookie);
-        
+
         logger.info("Re-login successful. Retrying request for activity details once...");
         const rawActivityDetailsStringRetry = await getActivityDetailsRaw(activityId, currentCookie);
         if (rawActivityDetailsStringRetry) {
@@ -343,4 +353,4 @@ export async function fetchActivityData(
 }
 
 // Optionally
-export { clearCookieCache, testCookieValidity };
+//export { clearCookieCache,testCookieValidity };
