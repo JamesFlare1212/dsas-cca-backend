@@ -96,15 +96,14 @@ async function applyFields(field: ActivityField, structuredActivityData: Activit
       break;
     case field.fID === "activityname":
       if (!structuredActivityData.name) structuredActivityData.name = "";
-      structuredActivityData.name = field.fData.replaceAll("  "," ");
-      structuredActivityData.name = structuredActivityData.name.replaceAll("）", ")");
-      structuredActivityData.name = structuredActivityData.name.replaceAll("（", "(");
-      structuredActivityData.name = structuredActivityData.name.replaceAll("'", "'");
+      structuredActivityData.name = await cleanText(field.fData);
+      structuredActivityData.name = structuredActivityData.name.replaceAll("（", "(").replaceAll("）", ")");
+      structuredActivityData.name = structuredActivityData.name.replaceAll("’", "'");
       structuredActivityData.name = structuredActivityData.name.replaceAll(".", "");
       structuredActivityData.name = structuredActivityData.name.replaceAll("IssuesT台上的社会问题", "Issues T 台上的社会问题");
       structuredActivityData.name =
         structuredActivityData.name.replaceAll("校管弦乐团(新老成员都适用", "校管弦乐团(新老成员都适用)").replaceAll("))",")");
-      structuredActivityData.name = pangu.spacing(structuredActivityData.name);
+      structuredActivityData.name = await pangu.spacing(structuredActivityData.name);
       break;
     case field.fID === "day":
       structuredActivityData.meeting.day = field.fData;
@@ -143,13 +142,32 @@ async function applyFields(field: ActivityField, structuredActivityData: Activit
   }
 }
 
+async function cleanText(text: string | null | undefined): Promise<string> {
+  if (!text) return "";
+  return text.replaceAll("<br/>", "\n").replaceAll("\u000B", "\v").replaceAll("  "," ");
+}
+
 async function postProcess(structuredActivityData: ActivityData): Promise<void> {
   // Format description
-  structuredActivityData.description = structuredActivityData.description?.replaceAll("<br/>", "\n") ?? "";
-  structuredActivityData.description = structuredActivityData.description?.replaceAll("\u000B", "\v") ?? "";
-  structuredActivityData.description = pangu.spacing(structuredActivityData.description ?? "");
+  structuredActivityData.description = await cleanText(structuredActivityData.description);
+  structuredActivityData.description = await pangu.spacing(structuredActivityData.description ?? "");
   structuredActivityData.description = structuredActivityData.description?.replaceAll("\n ", "\n") ?? "";
-  
+  // Format poorWeatherPlan
+  if (structuredActivityData.poorWeatherPlan) {
+    structuredActivityData.poorWeatherPlan = await cleanText(structuredActivityData.poorWeatherPlan);
+    structuredActivityData.poorWeatherPlan = await pangu.spacing(structuredActivityData.poorWeatherPlan ?? "");
+    structuredActivityData.poorWeatherPlan = structuredActivityData.poorWeatherPlan?.replaceAll("\n ", "\n") ?? "";
+  } else {
+    structuredActivityData.poorWeatherPlan = "";
+  }
+  // Format semesterCost
+  if (structuredActivityData.semesterCost) {
+    structuredActivityData.semesterCost = await cleanText(structuredActivityData.semesterCost);
+    structuredActivityData.semesterCost = await pangu.spacing(structuredActivityData.semesterCost ?? "");
+    structuredActivityData.semesterCost = structuredActivityData.semesterCost?.replaceAll("\n ", "\n") ?? "";
+  } else {
+    structuredActivityData.semesterCost = "";
+  }
   // Determine if student-led
   if (structuredActivityData.name) {
     if (structuredActivityData.name.search("Student-led") !== -1 ||
@@ -160,7 +178,6 @@ async function postProcess(structuredActivityData: ActivityData): Promise<void> 
       structuredActivityData.isStudentLed = false;
     }
   }
-  
   // Parse grades from schedule
   try {
     if (structuredActivityData.schedule) {
@@ -188,7 +205,6 @@ async function postProcess(structuredActivityData: ActivityData): Promise<void> 
 export async function structActivityData(rawActivityData: RawActivityData): Promise<ActivityData> {
   let structuredActivityData: ActivityData = JSON.parse(JSON.stringify(clubSchema));
   let rows = rawActivityData.newRows;
-  
   // Load club id - "rID": "3350:1:0:0"
   structuredActivityData.id = rows[0]?.rID?.split(":")[0] ?? null;
   
@@ -236,7 +252,6 @@ export async function structActivityData(rawActivityData: RawActivityData): Prom
       }
     }
   }
-  
   await postProcess(structuredActivityData);
   return structuredActivityData;
 }
