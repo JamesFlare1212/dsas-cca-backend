@@ -15,7 +15,7 @@ services:
       - cca_network
 
   redis:
-    image: "redis:7.2-alpine"
+    image: "redis:8.0-alpine"
     container_name: dsas-cca-redis
     command: redis-server --requirepass "dsas-cca"
     volumes:
