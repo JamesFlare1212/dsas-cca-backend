@@ -114,9 +114,10 @@ async function fetchProcessAndStoreActivity(activityId: string): Promise<Process
 app.get('/', (_req: Request, res: Response) => {
   res.send('Welcome to the DSAS CCA API!<br/>\
     GET /v1/activity/list<br/>\
-    GET /v1/activity/list?category=<br/>\
-    GET /v1/activity/list?academicYear=<br/>\
-    GET /v1/activity/list?grade=<br/>\
+    GET /v1/activity/list?category={category name}<br/>\
+    GET /v1/activity/list?academicYear={YYYY/YYYY}<br/>\
+    GET /v1/activity/list?grade={1-12}<br/>\
+    GET /v1/activity/list?isStudentLed={true/false}<br/>\
     GET /v1/activity/category<br/>\
     GET /v1/activity/academicYear<br/>\
     GET /v1/activity/:activityId<br/>\
@@ -126,116 +127,103 @@ app.get('/', (_req: Request, res: Response) => {
 // Activity list endpoint with filtering capabilities
 app.get('/v1/activity/list', async (req: Request, res: Response) => {
   try {
-    const category = req.query.category as string | undefined;
-    const academicYear = req.query.academicYear as string | undefined;
-    const grade = req.query.grade as string | undefined;
-    // Validate academicYear format if provided (YYYY/YYYY)
+    const category       = req.query.category as string | undefined;
+    const academicYear   = req.query.academicYear as string | undefined;
+    const grade          = req.query.grade as string | undefined;
+    const isStudentLedQ  = req.query.isStudentLed as string | undefined;
+
+    /* ---------- validate query params ---------- */
+    // academicYear (YYYY/YYYY)
     if (academicYear !== undefined) {
       const academicYearRegex = /^\d{4}\/\d{4}$/;
       if (!academicYearRegex.test(academicYear)) {
         return res.status(400).json({ error: 'Invalid academicYear format. Expected format: YYYY/YYYY' });
       }
     }
-    // Validate grade if provided
+    // grade (1 – 12)
     let validGrade: number | null = null;
     if (grade !== undefined) {
       const parsedGrade = parseInt(grade, 10);
-      if (!isNaN(parsedGrade) && parsedGrade > 0 && parsedGrade <= 12) {
-        validGrade = parsedGrade;
-      } else {
+      if (isNaN(parsedGrade) || parsedGrade < 1 || parsedGrade > 12) {
         return res.status(400).json({ error: 'Invalid grade parameter. Must be a number between 1 and 12.' });
       }
+      validGrade = parsedGrade;
     }
-    
-    logger.info(`Request received for /v1/activity/list with filters: ${JSON.stringify({category, academicYear, grade: validGrade})}`);
-    
+    // isStudentLed ("true" | "false")
+    let isStudentLedFilter: boolean | null = null;
+    if (isStudentLedQ !== undefined) {
+      if (isStudentLedQ === 'true')  isStudentLedFilter = true;
+      else if (isStudentLedQ === 'false') isStudentLedFilter = false;
+      else {
+        return res.status(400).json({ error: 'Invalid isStudentLed parameter. Must be "true" or "false".' });
+      }
+    }
+    logger.info(`Request /v1/activity/list filters: ${JSON.stringify({ category, academicYear, grade: validGrade, isStudentLed: isStudentLedFilter })}`);
+
+    /* ---------- fetch & cache ---------- */
     const activityKeys = await getAllActivityKeys();
-    const clubList: Record<string, {name: string, photo: string}> = {};
+    const clubList: Record<string, { name: string; photo: string }> = {};
 
     if (!activityKeys || activityKeys.length === 0) {
       logger.info('No activity keys found in Redis for list.');
       return res.json({});
     }
-    // Fetch all activity data in parallel
-    const allActivityDataPromises = activityKeys.map(async (key) => {
-      const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
-      return getActivityData(activityId);
-    });
 
-    const allActivities = await Promise.all(allActivityDataPromises);
-    // First pass: collect all available categories for validation
-    const availableCategories = new Set<string>();
+    const allActivities = await Promise.all(
+      activityKeys.map(async k => getActivityData(k.substring(ACTIVITY_KEY_PREFIX.length)))
+    );
+
+    /* ---------- gather available filter values for validation ---------- */
+    const availableCategories    = new Set<string>();
     const availableAcademicYears = new Set<string>();
-    
-    allActivities.forEach((activityData: ActivityData | null) => {
-      if (activityData && 
-        !activityData.error && 
-        activityData.source !== 'api-fetch-empty') {
-        if (activityData.category) {
-          availableCategories.add(activityData.category);
-        }
-        if (activityData.academicYear) {
-          availableAcademicYears.add(activityData.academicYear);
-        }
-      }
-    });
-    // Validate category against available categories
-    if (category && !availableCategories.has(category)) {
-      return res.status(400).json({ 
-        error: 'Invalid category parameter. Category not found.',
-        availableCategories: Array.from(availableCategories)
-      });
-    }
-    // Validate academicYear against available years
-    if (academicYear && !availableAcademicYears.has(academicYear)) {
-      return res.status(400).json({ 
-        error: 'Invalid academicYear parameter. Academic year not found.',
-        availableAcademicYears: Array.from(availableAcademicYears)
-      });
-    }
-    // Apply filters and collect club data
-    allActivities.forEach((activityData: ActivityData | null) => {
-      if (activityData &&
-        activityData.id &&
-        activityData.name &&
-        !activityData.error &&
-        activityData.source !== 'api-fetch-empty') {
-        // Check if it matches category filter if provided
-        if (category && activityData.category !== category) {
-          return; // Skip this activity
-        }
-        // Check if it matches academicYear filter if provided
-        if (academicYear && activityData.academicYear !== academicYear) {
-          return; // Skip this activity
-        }
-        // Check if it matches grade filter if provided
-        if (validGrade !== null) {
-          // Skip if grades are null
-          if (!activityData.grades || 
-            activityData.grades.min === null || 
-            activityData.grades.max === null) {
-            return; // Skip this activity
-          }
-          
-          const minGrade = parseInt(activityData.grades.min, 10);
-          const maxGrade = parseInt(activityData.grades.max, 10);
-          // Skip if grade is out of range or if parsing fails
-          if (isNaN(minGrade) || isNaN(maxGrade) || validGrade < minGrade || validGrade > maxGrade) {
-            return; // Skip this activity
-          }
-        }
-        // Add to result object with name and photo
-        clubList[activityData.id] = {
-          name: activityData.name,
-          photo: activityData.photo || ""
-        };
-      }
-    });
-    logger.info(`Returning list of ${Object.keys(clubList).length} valid clubs after filtering.`);
-    res.json(clubList);
 
-  } catch (error) {
-    logger.error('Error in /v1/activity/list endpoint:', error);
+    allActivities.forEach(a => {
+      if (a && !a.error && a.source !== 'api-fetch-empty') {
+        if (a.category)      availableCategories.add(a.category);
+        if (a.academicYear)  availableAcademicYears.add(a.academicYear);
+      }
+    });
+
+    if (category && !availableCategories.has(category)) {
+      return res.status(400).json({ error: 'Invalid category parameter. Category not found.', availableCategories: [...availableCategories] });
+    }
+    if (academicYear && !availableAcademicYears.has(academicYear)) {
+      return res.status(400).json({ error: 'Invalid academicYear parameter. Academic year not found.', availableAcademicYears: [...availableAcademicYears] });
+    }
+
+    /* ---------- apply filters ---------- */
+    allActivities.forEach(a => {
+      if (
+        a &&
+        a.id &&
+        a.name &&
+        !a.error &&
+        a.source !== 'api-fetch-empty'
+      ) {
+        // category
+        if (category && a.category !== category) return;
+        // academicYear
+        if (academicYear && a.academicYear !== academicYear) return;
+        // grade
+        if (validGrade !== null) {
+          if (!a.grades || a.grades.min == null || a.grades.max == null) return;
+          const minG = parseInt(a.grades.min, 10);
+          const maxG = parseInt(a.grades.max, 10);
+          if (isNaN(minG) || isNaN(maxG) || validGrade < minG || validGrade > maxG) return;
+        }
+        // isStudentLed
+        if (isStudentLedFilter !== null) {
+          // Treat missing value as false
+          const led = a.isStudentLed ?? false;
+          if (led !== isStudentLedFilter) return;
+        }
+        clubList[a.id] = { name: a.name, photo: a.photo || '' };
+      }
+    });
+    logger.info(`Returning ${Object.keys(clubList).length} clubs after filtering.`);
+    res.json(clubList);
+  } catch (err) {
+    logger.error('Error in /v1/activity/list endpoint:', err);
     res.status(500).json({ error: 'An internal server error occurred while generating activity list.' });
   }
 });
