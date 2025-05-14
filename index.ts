@@ -114,10 +114,10 @@ async function fetchProcessAndStoreActivity(activityId: string): Promise<Process
 app.get('/', (_req: Request, res: Response) => {
   res.send('Welcome to the DSAS CCA API!<br/>\
     GET /v1/activity/list<br/>\
-    GET /v1/activity/list?category={category name}<br/>\
+    GET /v1/activity/list?category={categoryName}<br/>\
     GET /v1/activity/list?academicYear={YYYY/YYYY}<br/>\
     GET /v1/activity/list?grade={1-12}<br/>\
-    GET /v1/activity/list?isStudentLed={true/false}<br/>\
+    GET /v1/activity/list?isStudentLed={true|false}<br/>\
     GET /v1/activity/category<br/>\
     GET /v1/activity/academicYear<br/>\
     GET /v1/activity/:activityId<br/>\
@@ -275,36 +275,47 @@ app.get('/v1/activity/academicYear', async (_req: Request, res: Response) => {
     const activityKeys = await getAllActivityKeys();
     const academicYearMap: Record<string, number> = {};
 
-    if (!activityKeys || activityKeys.length === 0) {
+    if (!activityKeys?.length) {
       logger.info('No activity keys found in Redis for academic years.');
       return res.json({});
     }
-    // Fetch all activity data in parallel
-    const allActivityDataPromises = activityKeys.map(async (key) => {
-      const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
-      return getActivityData(activityId);
-    });
-
-    const allActivities = await Promise.all(allActivityDataPromises);
-
+    // 1. Fetch all activity data in parallel
+    const allActivities = await Promise.all(
+      activityKeys.map(async (key) => {
+        const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
+        return getActivityData(activityId);
+      })
+    );
+    // 2. Count activities per academic year
     allActivities.forEach((activityData: ActivityData | null) => {
-      if (activityData && 
-        activityData.academicYear && 
-        !activityData.error && 
-        activityData.source !== 'api-fetch-empty') {
-        if (academicYearMap[activityData.academicYear]) {
-          academicYearMap[activityData.academicYear] = (academicYearMap[activityData.academicYear] ?? 0) + 1;
-        } else {
-          academicYearMap[activityData.academicYear] = 1;
-        }
+      if (
+        activityData &&
+        activityData.academicYear &&
+        !activityData.error &&
+        activityData.source !== 'api-fetch-empty'
+      ) {
+        academicYearMap[activityData.academicYear] =
+          (academicYearMap[activityData.academicYear] ?? 0) + 1;
       }
     });
-
-    logger.info(`Returning list of ${Object.keys(academicYearMap).length} academic years.`);
-    res.json(academicYearMap);
+    // 3. Sort the years in descending order (based on the start year)
+    const sortedAcademicYearMap: Record<string, number> = Object.fromEntries(
+      Object.entries(academicYearMap).sort(([yearA], [yearB]) => {
+        const startA = parseInt(yearA.split('/')[0], 10);
+        const startB = parseInt(yearB.split('/')[0], 10);
+        return startB - startA;
+      })
+    );
+    logger.info(
+      `Returning list of ${Object.keys(sortedAcademicYearMap).length} academic years.`
+    );
+    res.json(sortedAcademicYearMap);
   } catch (error) {
     logger.error('Error in /v1/activity/academicYear endpoint:', error);
-    res.status(500).json({ error: 'An internal server error occurred while generating academic year list.' });
+    res.status(500).json({
+      error:
+        'An internal server error occurred while generating academic year list.',
+    });
   }
 });
 
