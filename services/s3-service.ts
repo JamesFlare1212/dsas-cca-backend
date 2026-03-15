@@ -15,6 +15,7 @@ const S3_REGION = process.env.S3_REGION;
 const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID;
 const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY;
 const BUCKET_NAME = process.env.S3_BUCKET_NAME;
+const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL;
 const PUBLIC_URL_FILE_PREFIX = (process.env.S3_PUBLIC_URL_PREFIX || 'files').replace(/\/$/, '');
 
 // Initialize S3 client
@@ -195,6 +196,7 @@ export async function deleteS3Objects(objectKeysArray: string[]): Promise<boolea
 
 /**
  * Constructs the public S3 URL for an object key.
+ * Uses S3_PUBLIC_URL if set (reverse proxy scenario), otherwise uses S3_ENDPOINT.
  * @param objectKey - The key of the object in S3
  * @returns The full public URL
  */
@@ -202,8 +204,8 @@ export function constructS3Url(objectKey: string): string {
   if (!S3_ENDPOINT || !BUCKET_NAME) {
     return '';
   }
-  // Ensure S3_ENDPOINT does not end with a slash
-  const s3Base = S3_ENDPOINT.replace(/\/$/, '');
+  // Use S3_PUBLIC_URL if set (reverse proxy), otherwise use S3_ENDPOINT
+  const s3Base = (S3_PUBLIC_URL || S3_ENDPOINT).replace(/\/$/, '');
   // Ensure BUCKET_NAME does not start or end with a slash
   const bucket = BUCKET_NAME.replace(/^\//, '').replace(/\/$/, '');
   // Ensure objectKey does not start with a slash
