@@ -8,9 +8,34 @@ const COOKIE_FILE_PATH = resolve(import.meta.dir, 'cookies.json');
 
 let _inMemoryCookies: Cookie[] | null = null;
 
+// Login lock to prevent concurrent login attempts
+let _loginLock: Promise<Cookie[]> | null = null;
+
 // Proxy configuration
 const USE_PROXY = process.env.USE_PROXY === 'true';
 const PROXY_SERVER = process.env.ALL_PROXY || process.env.HTTP_PROXY || `http://host.docker.internal:9091`;
+
+/**
+ * Ensure only one login process runs at a time
+ */
+export async function ensureSingleLogin(username: string, password: string): Promise<Cookie[]> {
+  // Wait for any existing login to complete
+  if (_loginLock) {
+    logger.info('Login in progress, waiting for existing login to complete...');
+    await _loginLock;
+  }
+  
+  // Create new lock promise for this login attempt
+  _loginLock = (async () => {
+    try {
+      return await loginWithPlaywright(username, password);
+    } finally {
+      _loginLock = null;
+    }
+  })();
+  
+  return await _loginLock;
+}
 
 /**
  * Login using Playwright and extract cookies

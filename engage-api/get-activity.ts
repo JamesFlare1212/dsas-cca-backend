@@ -3,6 +3,7 @@ import axios from 'axios';
 import { logger } from '../utils/logger';
 import {
   loginWithPlaywright,
+  ensureSingleLogin,
   loadCachedCookies,
   saveCookiesToCache,
   clearCookieCache,
@@ -90,18 +91,18 @@ async function testCookieValidityWithApi(cookieString: string): Promise<boolean>
 }
 
 /**
- * Get complete cookies using Playwright
+ * Get complete cookies using Playwright with single login lock
  */
 async function getCompleteCookies(userName: string, userPwd: string): Promise<string> {
   logger.info('Attempting to get complete cookie string using Playwright login...');
   
-  const cookies = await loginWithPlaywright(userName, userPwd);
+  const cookies = await ensureSingleLogin(userName, userPwd);
   
   if (!cookies || cookies.length === 0) {
     throw new Error("Login failed: Could not obtain cookies.");
   }
 
-  const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+  const cookieString = cookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
   return cookieString;
 }
 
