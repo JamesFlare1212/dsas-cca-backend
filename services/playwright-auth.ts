@@ -8,16 +8,31 @@ const COOKIE_FILE_PATH = resolve(import.meta.dir, 'cookies.json');
 
 let _inMemoryCookies: Cookie[] | null = null;
 
+// Proxy configuration
+const USE_PROXY = process.env.USE_PROXY === 'true';
+const PROXY_SERVER = process.env.ALL_PROXY || process.env.HTTP_PROXY || `socks5://warp-proxy:9091`;
+
 /**
  * Login using Playwright and extract cookies
  */
 export async function loginWithPlaywright(username: string, password: string): Promise<Cookie[]> {
   logger.info('Starting Playwright login process...');
   
-  const browser = await chromium.launch({ 
+  const browserLaunchOptions: any = { 
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+  };
+
+  // Configure proxy if enabled
+  if (USE_PROXY) {
+    logger.info(`Using proxy: ${PROXY_SERVER}`);
+    browserLaunchOptions.proxy = {
+      server: PROXY_SERVER,
+      bypass: 'localhost,127.0.0.1,::1'
+    };
+  }
+
+  const browser = await chromium.launch(browserLaunchOptions);
 
   try {
     const context = await browser.newContext({

@@ -1,4 +1,16 @@
 services:
+  # Warp Socks Proxy Service (Optional - starts with --profile proxy)
+  warp-proxy:
+    image: ghcr.io/mon-ius/docker-warp-socks:v5
+    container_name: dsas-cca-warp-proxy
+    restart: unless-stopped
+    networks:
+      - cca_network
+    expose:
+      - "9091"
+    profiles:
+      - proxy
+
   app:
     build:
       context: .
@@ -11,16 +23,24 @@ services:
     environment:
       - NODE_ENV=production
       - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      # Proxy configuration (only active when USE_PROXY=true)
+      - USE_PROXY=${USE_PROXY:-false}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - ALL_PROXY=${ALL_PROXY:-}
     restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy
+      warp-proxy:
+        condition: service_started
+        required: false
     volumes:
       - ./services/cookies.json:/usr/src/app/services/cookies.json
     networks:
       - cca_network
-    mem_limit: 1g
-    cpus: 1.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   redis:
     image: "redis:8.0-alpine"
@@ -36,7 +56,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    mem_limit: 256m
 
 volumes:
   redis_data:
