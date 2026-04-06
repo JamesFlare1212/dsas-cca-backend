@@ -5,6 +5,7 @@
     "": {
       "name": "dsas-cca-backend-bun",
       "dependencies": {
+        "@playwright/test": "^1.49.0",
         "axios": "^1.9.0",
         "cors": "^2.8.5",
         "crypto": "^1.0.1",
@@ -16,7 +17,6 @@
         "uuid": "^11.1.0",
       },
       "devDependencies": {
-        "@playwright/test": "^1.49.0",
         "@types/bun": "latest",
         "typescript-language-server": "^5.1.3",
       },
