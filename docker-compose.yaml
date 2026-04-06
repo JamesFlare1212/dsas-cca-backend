@@ -5,21 +5,29 @@ services:
       dockerfile: Dockerfile
     container_name: dsas-cca-backend
     ports:
-      - "${PORT}:${PORT}"
+      - "${PORT:-3000}:${PORT:-3000}"
     env_file:
       - .env
+    environment:
+      - NODE_ENV=production
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
     restart: unless-stopped
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/cookies.json:/usr/src/app/services/cookies.json
     networks:
       - cca_network
+    mem_limit: 1g
+    cpus: 1.0
 
   redis:
     image: "redis:8.0-alpine"
     container_name: dsas-cca-redis
     command: redis-server --requirepass "dsas-cca"
     volumes:
-      - ./redis_data:/data
+      - redis_data:/data
     restart: unless-stopped
     networks:
       - cca_network
@@ -28,6 +36,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    mem_limit: 256m
+
+volumes:
+  redis_data:
 
 networks:
   cca_network:

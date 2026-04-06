@@ -3,9 +3,15 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
-    "dev": "bun run --watch index.ts"
+    "dev": "bun run --watch index.ts",
+    "playwright:install": "bunx playwright install",
+    "cookie:get": "bun run test/get-cookies.ts",
+    "test": "bun test",
+    "test:auth": "bun test test/auth.spec.ts",
+    "test:ui": "bunx playwright test --ui"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.0",
     "@types/bun": "latest",
     "typescript-language-server": "^5.1.3"
   },
