@@ -1,11 +1,12 @@
 services:
-  # Warp Socks Proxy Service (Internal only - no external ports exposed)
   warp-proxy:
     image: ghcr.io/mon-ius/docker-warp-socks:v5
     container_name: dsas-cca-warp-proxy
     restart: unless-stopped
     ports:
       - "9091:9091"
+    networks:
+      - cca_network
 
   app:
     build:
@@ -30,13 +31,17 @@ services:
         condition: service_healthy
       warp-proxy:
         condition: service_started
-        required: false
     volumes:
       - ./services/cookies.json:/usr/src/app/services/cookies.json
     networks:
       - cca_network
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "15m"
+        max-file: "3"
 
   redis:
     image: "redis:8.0-alpine"
@@ -52,9 +57,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-volumes:
-  redis_data:
 
 networks:
   cca_network:
