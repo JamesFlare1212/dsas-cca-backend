@@ -10,7 +10,7 @@ let _inMemoryCookies: Cookie[] | null = null;
 
 // Proxy configuration
 const USE_PROXY = process.env.USE_PROXY === 'true';
-const PROXY_SERVER = process.env.ALL_PROXY || process.env.HTTP_PROXY || `socks5://warp-proxy:9091`;
+const PROXY_SERVER = process.env.ALL_PROXY || process.env.HTTP_PROXY || `http://host.docker.internal:9091`;
 
 /**
  * Login using Playwright and extract cookies

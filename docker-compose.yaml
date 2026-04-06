@@ -4,13 +4,8 @@ services:
     image: ghcr.io/mon-ius/docker-warp-socks:v5
     container_name: dsas-cca-warp-proxy
     restart: unless-stopped
-    networks:
-      - cca_network
-    # Only expose port internally, not to host
-    expose:
-      - "9091"
-    profiles:
-      - proxy
+    ports:
+      - "9091:9091"
 
   app:
     build:
@@ -48,7 +43,7 @@ services:
     container_name: dsas-cca-redis
     command: redis-server --requirepass "dsas-cca"
     volumes:
-      - redis_data:/data
+      - ./redis_data:/data
     restart: unless-stopped
     networks:
       - cca_network
