@@ -1,11 +1,12 @@
 services:
-  # Warp Socks Proxy Service (Optional - starts with --profile proxy)
+  # Warp Socks Proxy Service (Internal only - no external ports exposed)
   warp-proxy:
     image: ghcr.io/mon-ius/docker-warp-socks:v5
     container_name: dsas-cca-warp-proxy
     restart: unless-stopped
     networks:
       - cca_network
+    # Only expose port internally, not to host
     expose:
       - "9091"
     profiles:
