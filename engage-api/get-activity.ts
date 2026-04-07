@@ -182,23 +182,15 @@ export async function fetchActivityData(
   let currentCookie = forceLogin ? null : await getCachedCookieString();
 
   if (forceLogin && currentCookie) {
+    logger.info('Forcing new login. Clearing cached cookie.');
     await clearCookieCache();
     currentCookie = null;
   }
 
-  if (currentCookie) {
-    const isValid = await testCookieValidityWithApi(currentCookie);
-    if (!isValid) {
-      logger.info('Cached cookie test failed or cookie expired. Clearing cache.');
-      await clearCookieCache();
-      currentCookie = null;
-    } else {
-      logger.info('Using valid cached cookie.');
-    }
-  }
-
+  // Optimization: Skip pre-validation, directly request data
+  // Only validate/re-login when we get 4xx error (fail-fast strategy)
   if (!currentCookie) {
-    logger.info(forceLogin ? 'Forcing new login.' : 'No valid cached cookie found or cache bypassed. Attempting login...');
+    logger.info('No cached cookie found. Attempting login...');
     try {
       currentCookie = await getCompleteCookies(userName, userPwd);
       
@@ -217,6 +209,8 @@ export async function fetchActivityData(
     return null;
   }
 
+  logger.debug('Using cached cookie for API request.');
+  
   try {
     const rawActivityDetailsString = await getActivityDetailsRaw(activityId, currentCookie);
     if (rawActivityDetailsString) {
@@ -227,7 +221,8 @@ export async function fetchActivityData(
     return null;
   } catch (error) {
     if (error instanceof AuthenticationError) {
-      logger.warn(`Initial fetch failed with AuthenticationError (Status: ${error.status}). Cookie was likely invalid. Attempting re-login and one retry.`);
+      // Cookie returned 4xx, now validate and re-login
+      logger.warn(`API returned 4xx error (Status: ${error.status}). Cookie may be invalid. Attempting re-login and retry.`);
       await clearCookieCache();
 
       try {
@@ -239,7 +234,7 @@ export async function fetchActivityData(
           await saveCookiesToCache(cookies);
         }
 
-        logger.info('Re-login successful. Retrying request for activity details once...');
+        logger.info('Re-login successful. Retrying request for activity details...');
         const rawActivityDetailsStringRetry = await getActivityDetailsRaw(activityId, currentCookie);
         if (rawActivityDetailsStringRetry) {
           const parsedOuterRetry = JSON.parse(rawActivityDetailsStringRetry);
