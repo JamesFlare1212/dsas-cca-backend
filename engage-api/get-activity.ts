@@ -2,7 +2,6 @@
 import axios from 'axios';
 import { logger } from '../utils/logger';
 import {
-  loginWithPlaywright,
   ensureSingleLogin,
   loadCachedCookies,
   saveCookiesToCache,
@@ -29,68 +28,6 @@ class AuthenticationError extends Error {
 }
 
 /**
- * Test cookie validity by calling API
- */
-async function testCookieValidityWithApi(cookieString: string): Promise<boolean> {
-  if (!cookieString) return false;
-  logger.debug('Testing cookie validity via API...');
-
-  const MAX_RETRIES = 3;
-  let attempt = 0;
-
-  while (attempt < MAX_RETRIES) {
-    try {
-      attempt++;
-      const url = 'https://engage.nkcswx.cn/Services/ActivitiesService.asmx/GetActivityDetails';
-      const headers = {
-        'Content-Type': 'application/json; charset=UTF-8',
-        'Cookie': cookieString,
-        'User-Agent': 'Mozilla/5.0 (Bun DSAS-CCA get-activity Module)',
-      };
-      const payload = {
-        "activityID": "3350"
-      };
-
-      logger.debug(`Attempt ${attempt}/${MAX_RETRIES}`);
-      const response = await axios.post(url, payload, {
-        headers,
-        timeout: 10000
-      });
-
-      // Check for 4xx errors (auth failures)
-      if (response.status >= 400 && response.status < 500) {
-        logger.warn(`Cookie test returned ${response.status}, likely invalid`);
-        return false;
-      }
-
-      logger.debug('Cookie test successful (API responded 2xx). Cookie is valid.');
-      return true;
-    } catch (error: any) {
-      logger.warn(`Cookie validity test failed (attempt ${attempt}/${MAX_RETRIES}).`);
-      if (error.response) {
-        // 4xx = auth failure (immediate fail)
-        if (error.response.status >= 400 && error.response.status < 500) {
-          logger.warn(`Cookie test API response status: ${error.response.status} (auth error)`);
-          return false;
-        }
-        // 5xx = server error (retry with delay)
-        logger.warn(`Cookie test API response status: ${error.response.status} (server error, retrying...)`);
-      } else {
-        // No response (000 status, network error, timeout)
-        logger.warn(`Network/timeout error: ${error.message} (retrying...)`);
-      }
-
-      if (attempt < MAX_RETRIES) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-      }
-    }
-  }
-  
-  logger.warn('Max retries reached. Cookie is likely invalid or expired.');
-  return false;
-}
-
-/**
  * Get complete cookies using Playwright with single login lock
  */
 async function getCompleteCookies(userName: string, userPwd: string): Promise<string> {
@@ -112,7 +49,7 @@ async function getCompleteCookies(userName: string, userPwd: string): Promise<st
 async function getActivityDetailsRaw(
   activityId: string,
   cookies: string,
-  maxRetries: number = 2,
+  maxRetries: number = 3,
   timeoutMilliseconds: number = 10000
 ): Promise<string | null> {
   const url = 'https://engage.nkcswx.cn/Services/ActivitiesService.asmx/GetActivityDetails';
@@ -128,11 +65,15 @@ async function getActivityDetailsRaw(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
+      logger.debug(`Attempt ${attempt + 1}/${maxRetries} for activity ${activityId} - Sending POST request to ${url}`);
       const response = await axios.post(url, payload, {
         headers,
         timeout: timeoutMilliseconds,
-        responseType: 'text'
+        responseType: 'text',
+        // Add additional timeout safety
+        maxRedirects: 5
       });
+      logger.debug(`Attempt ${attempt + 1}/${maxRetries} for activity ${activityId} - Received response status ${response.status}`);
       const outerData = JSON.parse(response.data);
       if (outerData && typeof outerData.d === 'string') {
         const innerData = JSON.parse(outerData.d);
@@ -145,8 +86,10 @@ async function getActivityDetailsRaw(
         logger.error(`Unexpected API response structure for activity ${activityId}.`);
       }
     } catch (error: any) {
-      // Check if response status is in 4xx range (400-499) to trigger auth error
-      if (error.response && error.response.status >= 400 && error.response.status < 500) {
+      // Only treat 401 (Unauthorized) and 403 (Forbidden) as authentication errors
+      // 404 (Not Found) is valid - activity doesn't exist
+      // Other 4xx errors should not trigger re-authentication
+      if (error.response && (error.response.status === 401 || error.response.status === 403)) {
         logger.warn(`Authentication error (${error.response.status}) while fetching activity ${activityId}. Cookie may be invalid.`);
         throw new AuthenticationError(`Received ${error.response.status} for activity ${activityId}`, error.response.status);
       }
@@ -177,7 +120,7 @@ export async function fetchActivityData(
   activityId: string,
   userName: string,
   userPwd: string,
-  forceLogin: boolean = false
+  forceLogin: boolean = false,
 ): Promise<any | null> {
   let currentCookie = forceLogin ? null : await getCachedCookieString();
 
@@ -212,7 +155,9 @@ export async function fetchActivityData(
   logger.debug('Using cached cookie for API request.');
   
   try {
+    logger.debug(`Calling getActivityDetailsRaw for activity ${activityId}...`);
     const rawActivityDetailsString = await getActivityDetailsRaw(activityId, currentCookie);
+    logger.debug(`getActivityDetailsRaw returned for activity ${activityId}`);
     if (rawActivityDetailsString) {
       const parsedOuter = JSON.parse(rawActivityDetailsString);
       return JSON.parse(parsedOuter.d);
