@@ -18,6 +18,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: dsas-cca-backend
+    # Run as root to allow writing to volume-mounted cookies.json
+    # Alternative: Use named volume instead of bind mount
+    user: "0:0"
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     env_file:
@@ -51,7 +54,8 @@ services:
   redis:
     image: "redis:8.0-alpine"
     container_name: dsas-cca-redis
-    command: redis-server --requirepass "dsas-cca"
+    # Add memory limits to prevent OOM
+    command: redis-server --requirepass "dsas-cca" --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
       - ./redis_data:/data
     restart: unless-stopped

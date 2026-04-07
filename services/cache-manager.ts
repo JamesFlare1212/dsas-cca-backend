@@ -96,24 +96,56 @@ async function processAndCacheActivity(activityId: string): Promise<ActivityData
  */
 export async function initializeClubCache(): Promise<void> {
   logger.info(`Starting initial club cache population from ID ${MIN_ACTIVITY_ID_SCAN} to ${MAX_ACTIVITY_ID_SCAN}`);
+  
+  const totalIds = MAX_ACTIVITY_ID_SCAN - MIN_ACTIVITY_ID_SCAN + 1;
+  let processedCount = 0;
+  let successCount = 0;
+  let errorCount = 0;
+  let skippedCount = 0;
+  
   const promises: Promise<void>[] = [];
   
   for (let i = MIN_ACTIVITY_ID_SCAN; i <= MAX_ACTIVITY_ID_SCAN; i++) {
     const activityId = String(i);
     promises.push(limit(async () => {
-      const cachedData = await getActivityData(activityId);
-      if (!cachedData || 
-        Object.keys(cachedData).length === 0 || 
-        !cachedData.lastCheck || 
-        cachedData.error) {
-        logger.debug(`Initializing cache for activity ID: ${activityId}`);
-        await processAndCacheActivity(activityId);
+      try {
+        const cachedData = await getActivityData(activityId);
+        
+        if (!cachedData || 
+          Object.keys(cachedData).length === 0 || 
+          !cachedData.lastCheck || 
+          cachedData.error) {
+          
+          logger.debug(`Initializing cache for activity ID: ${activityId}`);
+          await processAndCacheActivity(activityId);
+          successCount++;
+        } else {
+          skippedCount++;
+        }
+        
+        processedCount++;
+        
+        // Log progress every 100 activities
+        if (processedCount % 100 === 0) {
+          logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
+        }
+        
+      } catch (error) {
+        errorCount++;
+        processedCount++;
+        logger.error(`Error processing activity ID ${activityId}:`, error);
+        
+        if (processedCount % 100 === 0) {
+          logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
+        }
       }
     }));
   }
 
   await Promise.all(promises);
-  logger.info('Initial club cache population finished.');
+  
+  logger.info(`Initial club cache population finished.`);
+  logger.info(`Summary: Total: ${totalIds}, Processed: ${processedCount}, Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
 }
 
 /**

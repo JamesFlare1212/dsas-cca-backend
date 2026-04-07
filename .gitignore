@@ -1,5 +1,5 @@
 node_modules
-nkcs-engage.cookie.txt
+cookies.json
 .env
 redis_data
 warp
