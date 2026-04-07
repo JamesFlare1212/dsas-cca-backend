@@ -92,6 +92,24 @@ async function processAndCacheActivity(activityId: string): Promise<ActivityData
 }
 
 /**
+ * Process a single activity for initialization (extracted for Promise.allSettled)
+ * @param activityId - The activity ID to process
+ */
+async function processSingleActivity(activityId: string): Promise<void> {
+  const cachedData = await getActivityData(activityId);
+  
+  if (!cachedData || 
+    Object.keys(cachedData).length === 0 || 
+    !cachedData.lastCheck || 
+    cachedData.error) {
+    
+    logger.debug(`Initializing cache for activity ID: ${activityId}`);
+    await processAndCacheActivity(activityId);
+  }
+  // else: skip (already cached)
+}
+
+/**
  * Initialize the club cache by scanning through all activity IDs
  */
 export async function initializeClubCache(): Promise<void> {
@@ -107,42 +125,30 @@ export async function initializeClubCache(): Promise<void> {
   
   for (let i = MIN_ACTIVITY_ID_SCAN; i <= MAX_ACTIVITY_ID_SCAN; i++) {
     const activityId = String(i);
-    promises.push(limit(async () => {
-      try {
-        const cachedData = await getActivityData(activityId);
-        
-        if (!cachedData || 
-          Object.keys(cachedData).length === 0 || 
-          !cachedData.lastCheck || 
-          cachedData.error) {
-          
-          logger.debug(`Initializing cache for activity ID: ${activityId}`);
-          await processAndCacheActivity(activityId);
-          successCount++;
-        } else {
-          skippedCount++;
-        }
-        
-        processedCount++;
-        
-        // Log progress every 100 activities
-        if (processedCount % 100 === 0) {
-          logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
-        }
-        
-      } catch (error) {
-        errorCount++;
-        processedCount++;
-        logger.error(`Error processing activity ID ${activityId}:`, error);
-        
-        if (processedCount % 100 === 0) {
-          logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
-        }
-      }
-    }));
+    promises.push(
+      limit(() => 
+        processSingleActivity(activityId)
+          .then(() => {
+            successCount++;
+            processedCount++;
+            if (processedCount % 100 === 0) {
+              logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
+            }
+          })
+          .catch((error: unknown) => {
+            errorCount++;
+            processedCount++;
+            logger.error(`Error processing activity ID ${activityId}:`, error);
+            if (processedCount % 100 === 0) {
+              logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
+            }
+          })
+      )
+    );
   }
 
-  await Promise.all(promises);
+  // Use allSettled to prevent single hung promise from blocking all
+  await Promise.allSettled(promises);
   
   logger.info(`Initial club cache population finished.`);
   logger.info(`Summary: Total: ${totalIds}, Processed: ${processedCount}, Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
