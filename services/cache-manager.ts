@@ -111,46 +111,57 @@ async function processSingleActivity(activityId: string): Promise<void> {
 
 /**
  * Initialize the club cache by scanning through all activity IDs
+ * Processed in batches to prevent memory pressure from accumulating all promises upfront
  */
 export async function initializeClubCache(): Promise<void> {
   logger.info(`Starting initial club cache population from ID ${MIN_ACTIVITY_ID_SCAN} to ${MAX_ACTIVITY_ID_SCAN}`);
   
   const totalIds = MAX_ACTIVITY_ID_SCAN - MIN_ACTIVITY_ID_SCAN + 1;
+  const BATCH_SIZE = 100;
   let processedCount = 0;
   let successCount = 0;
   let errorCount = 0;
   let skippedCount = 0;
   
-  const promises: Promise<void>[] = [];
-  
-  for (let i = MIN_ACTIVITY_ID_SCAN; i <= MAX_ACTIVITY_ID_SCAN; i++) {
-    const activityId = String(i);
-    promises.push(
-      limit(() => 
-        processSingleActivity(activityId)
-          .then(() => {
-            successCount++;
-            processedCount++;
-            if (processedCount % 100 === 0) {
-              const mem = process.memoryUsage();
-              logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
-            }
-          })
-          .catch((error: unknown) => {
-            errorCount++;
-            processedCount++;
-            logger.error(`Error processing activity ID ${activityId}:`, error);
-            if (processedCount % 100 === 0) {
-              const mem = process.memoryUsage();
-              logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
-            }
-          })
-      )
-    );
-  }
+  for (let batchStart = MIN_ACTIVITY_ID_SCAN; batchStart <= MAX_ACTIVITY_ID_SCAN; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, MAX_ACTIVITY_ID_SCAN);
+    const batchPromises: Promise<void>[] = [];
+    
+    logger.info(`Processing batch ${Math.floor(processedCount / BATCH_SIZE) + 1}/${Math.ceil(totalIds / BATCH_SIZE)} (IDs ${batchStart}-${batchEnd})`);
+    
+    for (let i = batchStart; i <= batchEnd; i++) {
+      const activityId = String(i);
+      batchPromises.push(
+        limit(() => 
+          processSingleActivity(activityId)
+            .then(() => {
+              successCount++;
+              processedCount++;
+              if (processedCount % 100 === 0) {
+                const mem = process.memoryUsage();
+                logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
+              }
+            })
+            .catch((error: unknown) => {
+              errorCount++;
+              processedCount++;
+              logger.error(`Error processing activity ID ${activityId}:`, error);
+              if (processedCount % 100 === 0) {
+                const mem = process.memoryUsage();
+                logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
+              }
+            })
+        )
+      );
+    }
 
-  // Use allSettled to prevent single hung promise from blocking all
-  await Promise.allSettled(promises);
+    await Promise.allSettled(batchPromises);
+    batchPromises.length = 0;
+    
+    if (batchEnd < MAX_ACTIVITY_ID_SCAN) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
   
   logger.info(`Initial club cache population finished.`);
   logger.info(`Summary: Total: ${totalIds}, Processed: ${processedCount}, Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);

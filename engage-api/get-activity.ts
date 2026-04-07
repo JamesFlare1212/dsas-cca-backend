@@ -54,7 +54,7 @@ async function testCookieValidityWithApi(cookieString: string): Promise<boolean>
       logger.debug(`Attempt ${attempt}/${MAX_RETRIES}`);
       const response = await axios.post(url, payload, {
         headers,
-        timeout: 20000
+        timeout: 10000
       });
 
       // Check for 4xx errors (auth failures)
@@ -112,8 +112,8 @@ async function getCompleteCookies(userName: string, userPwd: string): Promise<st
 async function getActivityDetailsRaw(
   activityId: string,
   cookies: string,
-  maxRetries: number = 3,
-  timeoutMilliseconds: number = 20000
+  maxRetries: number = 2,
+  timeoutMilliseconds: number = 10000
 ): Promise<string | null> {
   const url = 'https://engage.nkcswx.cn/Services/ActivitiesService.asmx/GetActivityDetails';
   const headers = {
