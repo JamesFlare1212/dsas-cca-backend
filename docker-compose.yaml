@@ -5,8 +5,6 @@ services:
     restart: unless-stopped
     ports:
       - "9091:9091"
-    networks:
-      - cca_network
     logging:
       driver: "json-file"
       options:
@@ -39,12 +37,6 @@ services:
         condition: service_healthy
       warp-proxy:
         condition: service_started
-    volumes:
-      - ./services/cookies.json:/usr/src/app/services/cookies.json
-    networks:
-      - cca_network
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     logging:
       driver: "json-file"
       options:
@@ -59,8 +51,6 @@ services:
     volumes:
       - ./redis_data:/data
     restart: unless-stopped
-    networks:
-      - cca_network
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "dsas-cca", "ping"]
       interval: 10s
@@ -71,7 +61,3 @@ services:
       options:
         max-size: "15m"
         max-file: "3"
-
-networks:
-  cca_network:
-    driver: bridge
