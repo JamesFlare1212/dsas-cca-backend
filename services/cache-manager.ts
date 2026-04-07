@@ -132,7 +132,8 @@ export async function initializeClubCache(): Promise<void> {
             successCount++;
             processedCount++;
             if (processedCount % 100 === 0) {
-              logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
+              const mem = process.memoryUsage();
+              logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
             }
           })
           .catch((error: unknown) => {
@@ -140,7 +141,8 @@ export async function initializeClubCache(): Promise<void> {
             processedCount++;
             logger.error(`Error processing activity ID ${activityId}:`, error);
             if (processedCount % 100 === 0) {
-              logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
+              const mem = process.memoryUsage();
+              logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
             }
           })
       )
@@ -183,7 +185,23 @@ export async function updateStaleClubs(): Promise<void> {
   }
 
   await cleanupOrphanedS3Images();
-  await Promise.all(promises);
+  
+  // Process promises in batches to prevent event loop blocking
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < promises.length; i += BATCH_SIZE) {
+    const batch = promises.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(promises.length / BATCH_SIZE);
+    
+    await Promise.all(batch);
+    logger.info(`Stale check batch ${batchNum}/${totalBatches} complete`);
+    
+    // Small delay between batches to prevent event loop blocking
+    if (i + BATCH_SIZE < promises.length) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  
   logger.info('Stale club check finished.');
 }
 

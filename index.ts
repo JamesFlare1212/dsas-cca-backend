@@ -2,6 +2,24 @@
 import express, { Request, Response } from 'express';
 import { config } from 'dotenv';
 import cors from 'cors';
+import http from 'http';
+import https from 'https';
+import axios from 'axios';
+
+// Configure HTTP connection pooling with keep-alive
+axios.defaults.httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  timeout: 30000
+});
+
+axios.defaults.httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  timeout: 30000
+});
 import { fetchActivityData } from './engage-api/get-activity';
 import { structActivityData } from './engage-api/struct-activity';
 import { structStaffData } from './engage-api/struct-staff';
@@ -48,6 +66,10 @@ config();
 const USERNAME = process.env.API_USERNAME;
 const PASSWORD = process.env.API_PASSWORD;
 const PORT = process.env.PORT || 3000;
+
+// Mutex flags to prevent overlapping cron runs
+let isUpdatingClubs = false;
+let isUpdatingStaff = false;
 const FIXED_STAFF_ACTIVITY_ID = process.env.FIXED_STAFF_ACTIVITY_ID;
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || '*';
 const CLUB_CHECK_INTERVAL_SECONDS = parseInt(process.env.CLUB_CHECK_INTERVAL_SECONDS || '300', 10);
@@ -400,10 +422,28 @@ async function performBackgroundTasks(): Promise<void> {
     await cleanupOrphanedS3Images();
     
     logger.info(`Setting up periodic club cache updates every ${CLUB_CHECK_INTERVAL_SECONDS} seconds.`);
-    setInterval(updateStaleClubs, CLUB_CHECK_INTERVAL_SECONDS * 1000);
+    setInterval(() => {
+      if (isUpdatingClubs) {
+        logger.warn('Previous club update still running, skipping this run');
+        return;
+      }
+      isUpdatingClubs = true;
+      updateStaleClubs().finally(() => {
+        isUpdatingClubs = false;
+      });
+    }, CLUB_CHECK_INTERVAL_SECONDS * 1000);
 
     logger.info(`Setting up periodic staff cache updates every ${STAFF_CHECK_INTERVAL_SECONDS} seconds.`);
-    setInterval(() => initializeOrUpdateStaffCache(false), STAFF_CHECK_INTERVAL_SECONDS * 1000);
+    setInterval(() => {
+      if (isUpdatingStaff) {
+        logger.warn('Previous staff update still running, skipping this run');
+        return;
+      }
+      isUpdatingStaff = true;
+      initializeOrUpdateStaffCache(false).finally(() => {
+        isUpdatingStaff = false;
+      });
+    }, STAFF_CHECK_INTERVAL_SECONDS * 1000);
     
     logger.info('Background initialization and periodic task setup complete.');
   } catch (error) {
