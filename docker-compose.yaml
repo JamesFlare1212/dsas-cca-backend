@@ -1,16 +1,4 @@
 services:
-  warp-proxy:
-    image: ghcr.io/mon-ius/docker-warp-socks:v5
-    container_name: dsas-cca-warp-proxy
-    restart: unless-stopped
-    ports:
-      - "9091:9091"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "15m"
-        max-file: "3"
-
   app:
     build:
       context: .
@@ -26,19 +14,10 @@ services:
     environment:
       - NODE_ENV=production
       - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-      # Proxy configuration (only active when USE_PROXY=true)
-      - USE_PROXY=${USE_PROXY:-false}
-      - HTTP_PROXY=${HTTP_PROXY:-}
-      - HTTPS_PROXY=${HTTPS_PROXY:-}
-      - ALL_PROXY=${ALL_PROXY:-}
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
-      warp-proxy:
-        condition: service_started
     logging:
       driver: "json-file"
       options:
