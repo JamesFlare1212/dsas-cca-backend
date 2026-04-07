@@ -49,7 +49,7 @@ services:
     image: "redis:8.0-alpine"
     container_name: dsas-cca-redis
     # Add memory limits to prevent OOM
-    command: redis-server --requirepass "dsas-cca" --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --requirepass "dsas-cca"
     volumes:
       - ./redis_data:/data
     restart: unless-stopped
