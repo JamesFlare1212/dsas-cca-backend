@@ -164,26 +164,16 @@ export async function deleteS3Objects(objectKeysArray: string[]): Promise<boolea
     return true;
   }
   try {
-    // With Bun's S3Client, we need to delete objects one by one
-    // Process in batches of 100 for better performance
-    const BATCH_SIZE = 100;
     let successCount = 0;
     let errorCount = 0;
     
-    for (let i = 0; i < objectKeysArray.length; i += BATCH_SIZE) {
-      const batch = objectKeysArray.slice(i, i + BATCH_SIZE);
-      // Process batch in parallel
-      const results = await Promise.allSettled(
-        batch.map(key => s3Client!.delete(key))
-      );
-      // Count successes and failures
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          successCount++;
-        } else {
-          errorCount++;
-          logger.error(`Failed to delete object: ${result.reason}`);
-        }
+    for (const key of objectKeysArray) {
+      try {
+        await s3Client.delete(key);
+        successCount++;
+      } catch (error) {
+        errorCount++;
+        logger.error(`Failed to delete object ${key}:`, error);
       }
     }
     logger.info(`Deleted ${successCount} objects from S3. Failed: ${errorCount}`);

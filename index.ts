@@ -191,9 +191,11 @@ app.get('/v1/activity/list', async (req: Request, res: Response) => {
       return res.json({});
     }
 
-    const allActivities = await Promise.all(
-      activityKeys.map(async k => getActivityData(k.substring(ACTIVITY_KEY_PREFIX.length)))
-    );
+    const allActivities: (ActivityData | null)[] = [];
+    for (const k of activityKeys) {
+      const activityData = await getActivityData(k.substring(ACTIVITY_KEY_PREFIX.length));
+      allActivities.push(activityData);
+    }
 
     /* ---------- gather available filter values for validation ---------- */
     const availableCategories    = new Set<string>();
@@ -261,13 +263,13 @@ app.get('/v1/activity/category', async (_req: Request, res: Response) => {
       logger.info('No activity keys found in Redis for categories.');
       return res.json({});
     }
-    // Fetch all activity data in parallel
-    const allActivityDataPromises = activityKeys.map(async (key) => {
+    // Fetch all activity data sequentially
+    const allActivities: (ActivityData | null)[] = [];
+    for (const key of activityKeys) {
       const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
-      return getActivityData(activityId);
-    });
-
-    const allActivities = await Promise.all(allActivityDataPromises);
+      const activityData = await getActivityData(activityId);
+      allActivities.push(activityData);
+    }
 
     allActivities.forEach((activityData: ActivityData | null) => {
       if (activityData && 
@@ -301,13 +303,13 @@ app.get('/v1/activity/academicYear', async (_req: Request, res: Response) => {
       logger.info('No activity keys found in Redis for academic years.');
       return res.json({});
     }
-    // 1. Fetch all activity data in parallel
-    const allActivities = await Promise.all(
-      activityKeys.map(async (key) => {
-        const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
-        return getActivityData(activityId);
-      })
-    );
+    // 1. Fetch all activity data sequentially
+    const allActivities: (ActivityData | null)[] = [];
+    for (const key of activityKeys) {
+      const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
+      const activityData = await getActivityData(activityId);
+      allActivities.push(activityData);
+    }
     // 2. Count activities per academic year
     allActivities.forEach((activityData: ActivityData | null) => {
       if (

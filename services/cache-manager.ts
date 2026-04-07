@@ -1,6 +1,5 @@
 // services/cache-manager.ts
 import { config } from 'dotenv';
-import pLimit from 'p-limit';
 import { fetchActivityData } from '../engage-api/get-activity';
 import { structActivityData } from '../engage-api/struct-activity';
 import { structStaffData } from '../engage-api/struct-staff';
@@ -113,62 +112,33 @@ async function processSingleActivity(activityId: string): Promise<void> {
 
 /**
  * Initialize the club cache by scanning through all activity IDs
- * Processed in batches to prevent memory pressure from accumulating all promises upfront
+ * Processed sequentially in single-threaded mode
  */
 export async function initializeClubCache(): Promise<void> {
-  logger.info(`Starting initial club cache population from ID ${MIN_ACTIVITY_ID_SCAN} to ${MAX_ACTIVITY_ID_SCAN}`);
+  logger.info(`Starting initial club cache population from ID ${MIN_ACTIVITY_ID_SCAN} to ${MAX_ACTIVITY_ID_SCAN} (single-threaded mode)`);
   
   const totalIds = MAX_ACTIVITY_ID_SCAN - MIN_ACTIVITY_ID_SCAN + 1;
-  const BATCH_SIZE = 100;
   let processedCount = 0;
   let successCount = 0;
   let errorCount = 0;
   skippedCount = 0; // Reset for this run
   
-  for (let batchStart = MIN_ACTIVITY_ID_SCAN; batchStart <= MAX_ACTIVITY_ID_SCAN; batchStart += BATCH_SIZE) {
-    const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, MAX_ACTIVITY_ID_SCAN);
-    const batchPromises: Promise<void>[] = [];
-    // Create fresh p-limit instance per batch to prevent internal queue accumulation
-    const limit = pLimit(CONCURRENT_API_CALLS);
+  for (let i = MIN_ACTIVITY_ID_SCAN; i <= MAX_ACTIVITY_ID_SCAN; i++) {
+    const activityId = String(i);
     
-    logger.info(`Processing batch ${Math.floor(processedCount / BATCH_SIZE) + 1}/${Math.ceil(totalIds / BATCH_SIZE)} (IDs ${batchStart}-${batchEnd})`);
-    
-    for (let i = batchStart; i <= batchEnd; i++) {
-      const activityId = String(i);
-      batchPromises.push(
-        limit(() => 
-          processSingleActivity(activityId)
-            .then(() => {
-              successCount++;
-              processedCount++;
-              if (processedCount % 100 === 0) {
-                const mem = process.memoryUsage();
-                logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
-              }
-            })
-            .catch((error: unknown) => {
-              errorCount++;
-              processedCount++;
-              logger.error(`Error processing activity ID ${activityId}:`, error);
-              if (processedCount % 100 === 0) {
-                const mem = process.memoryUsage();
-                logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
-              }
-            })
-        )
-      );
-    }
-
-    await Promise.allSettled(batchPromises);
-    batchPromises.length = 0;
-    
-    // Garbage collection hint and longer delay between batches to allow event loop to drain
-    if (global.gc) {
-      global.gc(false);
+    try {
+      await processSingleActivity(activityId);
+      successCount++;
+    } catch (error) {
+      errorCount++;
+      logger.error(`Error processing activity ID ${activityId}:`, error);
     }
     
-    if (batchEnd < MAX_ACTIVITY_ID_SCAN) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+    processedCount++;
+    
+    if (processedCount % 100 === 0) {
+      const mem = process.memoryUsage();
+      logger.info(`Progress: ${processedCount}/${totalIds} (${Math.round(processedCount/totalIds*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB`);
     }
   }
   
@@ -178,50 +148,31 @@ export async function initializeClubCache(): Promise<void> {
 
 /**
  * Update stale clubs in the cache
+ * Processed sequentially in single-threaded mode
  */
 export async function updateStaleClubs(): Promise<void> {
-  logger.info('Starting stale club check...');
+  logger.info('Starting stale club check (single-threaded mode)...');
   const now = Date.now();
   const updateIntervalMs = CLUB_UPDATE_INTERVAL_MINS * 60 * 1000;
-  const limit = pLimit(CONCURRENT_API_CALLS);
-  const promises: Promise<void>[] = [];
   const activityKeys = await getAllActivityKeys();
 
   for (const key of activityKeys) {
     const activityId = key.substring(ACTIVITY_KEY_PREFIX.length);
-    promises.push(limit(async () => {
-      const cachedData = await getActivityData(activityId);
-      
-      if (cachedData && cachedData.lastCheck) {
-        const lastCheckTime = new Date(cachedData.lastCheck).getTime();
-        if ((now - lastCheckTime) > updateIntervalMs || cachedData.error) {
-          logger.info(`Activity ${activityId} is stale or had error. Updating...`);
-          await processAndCacheActivity(activityId);
-        }
-      } else if (!cachedData || Object.keys(cachedData).length === 0) {
-        logger.info(`Activity ${activityId} not in cache or is empty object. Attempting to fetch...`);
+    const cachedData = await getActivityData(activityId);
+    
+    if (cachedData && cachedData.lastCheck) {
+      const lastCheckTime = new Date(cachedData.lastCheck).getTime();
+      if ((now - lastCheckTime) > updateIntervalMs || cachedData.error) {
+        logger.info(`Activity ${activityId} is stale or had error. Updating...`);
         await processAndCacheActivity(activityId);
       }
-    }));
+    } else if (!cachedData || Object.keys(cachedData).length === 0) {
+      logger.info(`Activity ${activityId} not in cache or is empty object. Attempting to fetch...`);
+      await processAndCacheActivity(activityId);
+    }
   }
 
   await cleanupOrphanedS3Images();
-  
-  // Process promises in batches to prevent event loop blocking
-  const BATCH_SIZE = 50;
-  for (let i = 0; i < promises.length; i += BATCH_SIZE) {
-    const batch = promises.slice(i, i + BATCH_SIZE);
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(promises.length / BATCH_SIZE);
-    
-    await Promise.all(batch);
-    logger.info(`Stale check batch ${batchNum}/${totalBatches} complete`);
-    
-    // Small delay between batches to prevent event loop blocking
-    if (i + BATCH_SIZE < promises.length) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
   
   logger.info('Stale club check finished.');
 }
