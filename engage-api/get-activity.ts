@@ -45,6 +45,7 @@ async function getCompleteCookies(userName: string, userPwd: string): Promise<st
 
 /**
  * Get activity details from API
+ * Only returns data on HTTP 200. Returns null on any error (5xx, timeout, etc.)
  */
 async function getActivityDetailsRaw(
   activityId: string,
@@ -73,6 +74,16 @@ async function getActivityDetailsRaw(
         // Add additional timeout safety
         maxRedirects: 5
       });
+      
+      // CRITICAL: Only accept HTTP 200. Reject all other status codes including 5xx
+      if (response.status !== 200) {
+        logger.error(`Non-200 status ${response.status} for activity ${activityId}. NOT updating cache to preserve local data.`);
+        if (attempt === maxRetries - 1) {
+          logger.error(`All ${maxRetries} retries failed with non-200 status for activity ${activityId}.`);
+        }
+        return null;
+      }
+      
       logger.debug(`Attempt ${attempt + 1}/${maxRetries} for activity ${activityId} - Received response status ${response.status}`);
       const outerData = JSON.parse(response.data);
       if (outerData && typeof outerData.d === 'string') {
@@ -88,7 +99,7 @@ async function getActivityDetailsRaw(
     } catch (error: any) {
       // Only treat 401 (Unauthorized) and 403 (Forbidden) as authentication errors
       // 404 (Not Found) is valid - activity doesn't exist
-      // Other 4xx errors should not trigger re-authentication
+      // Other 4xx/5xx errors should not trigger re-authentication
       if (error.response && (error.response.status === 401 || error.response.status === 403)) {
         logger.warn(`Authentication error (${error.response.status}) while fetching activity ${activityId}. Cookie may be invalid.`);
         throw new AuthenticationError(`Received ${error.response.status} for activity ${activityId}`, error.response.status);
@@ -97,6 +108,10 @@ async function getActivityDetailsRaw(
 
       if (error.response) {
         logger.error(`Status: ${error.response.status}, Data (getActivityDetailsRaw): ${ String(error.response.data).slice(0,100)}...`);
+        // CRITICAL: 5xx errors should NOT update cache
+        if (error.response.status >= 500 && error.response.status < 600) {
+          logger.error(`Server error ${error.response.status} - preserving local cache, not updating.`);
+        }
       }
       if (attempt === maxRetries - 1) {
         logger.error(`All ${maxRetries} retries failed for activity ${activityId}.`);

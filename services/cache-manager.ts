@@ -72,9 +72,10 @@ let skippedCount = 0;
 /**
  * Process and cache a single activity
  * @param activityId - The activity ID to process
+ * @param forceUpdate - If true, update cache even on fetch failure (default: false)
  * @returns The processed activity data
  */
-async function processAndCacheActivity(activityId: string): Promise<ActivityData> {
+async function processAndCacheActivity(activityId: string, forceUpdate: boolean = false): Promise<ActivityData> {
   logger.debug(`Processing activity ID: ${activityId}`);
   try {
     if (!USERNAME || !PASSWORD) {
@@ -92,11 +93,21 @@ async function processAndCacheActivity(activityId: string): Promise<ActivityData
     let structuredActivity: ActivityData;
 
     if (!activityJson) {
-      logger.info(`No data found for activity ID ${activityId} from engage API. Caching as empty.`);
-      structuredActivity = { 
-        lastCheck: new Date().toISOString(), 
-        source: 'api-fetch-empty' 
-      };
+      // CRITICAL: Only cache empty data if forceUpdate is true
+      // This prevents 5xx errors from overwriting valid local data
+      if (forceUpdate) {
+        logger.info(`No data found for activity ID ${activityId} from engage API. Force updating cache.`);
+        structuredActivity = { 
+          lastCheck: new Date().toISOString(), 
+          source: 'api-fetch-empty' 
+        };
+        await setActivityData(activityId, structuredActivity);
+        return structuredActivity;
+      } else {
+        logger.warn(`No data for activity ${activityId}. Preserving existing cache - NOT updating.`);
+        const existingData = await getActivityData(activityId);
+        return existingData || { lastCheck: new Date().toISOString(), source: 'cache-preserved' };
+      }
     } else {
       structuredActivity = await structActivityData(activityJson);
       if (structuredActivity && structuredActivity.photo && 
@@ -124,12 +135,19 @@ async function processAndCacheActivity(activityId: string): Promise<ActivityData
     return structuredActivity;
   } catch (error) {
     logger.error(`Error processing activity ID ${activityId}:`, error);
-    const errorData: ActivityData = { 
-      lastCheck: new Date().toISOString(), 
-      error: "Failed to fetch or process" 
-    };
-    await setActivityData(activityId, errorData);
-    return errorData;
+    // CRITICAL: On error, preserve existing cache instead of overwriting with error data
+    if (forceUpdate) {
+      const errorData: ActivityData = { 
+        lastCheck: new Date().toISOString(), 
+        error: "Failed to fetch or process" 
+      };
+      await setActivityData(activityId, errorData);
+      return errorData;
+    } else {
+      logger.warn(`Error fetching activity ${activityId}. Preserving existing cache.`);
+      const existingData = await getActivityData(activityId);
+      return existingData || { lastCheck: new Date().toISOString(), error: (error as Error).message };
+    }
   }
 }
 
