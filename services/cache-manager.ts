@@ -299,9 +299,7 @@ export async function cleanupOrphanedS3Images(): Promise<void> {
       
       if (activityData && 
         typeof activityData.photo === 'string' && 
-        activityData.photo.startsWith('http') && 
-        S3_ENDPOINT && 
-        activityData.photo.startsWith(S3_ENDPOINT)) {
+        activityData.photo.startsWith('http')) {
         referencedS3Urls.add(activityData.photo);
       }
     }
