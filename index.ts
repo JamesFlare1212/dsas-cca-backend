@@ -38,8 +38,7 @@ import { extractBase64Image } from './utils/image-processor';
 import {
   initializeClubCache,
   updateStaleClubs,
-  initializeOrUpdateStaffCache,
-  cleanupOrphanedS3Images
+  initializeOrUpdateStaffCache
 } from './services/cache-manager';
 import { logger } from './utils/logger';
 import type { ActivityData } from './models/activity'
@@ -421,7 +420,10 @@ async function performBackgroundTasks(): Promise<void> {
   try {
     await initializeClubCache();
     await initializeOrUpdateStaffCache(true);
-    await cleanupOrphanedS3Images();
+    // NOTE: Removed immediate cleanupOrphanedS3Images() call.
+    // Cleanup will run during periodic updateStaleClubs() instead.
+    // Running cleanup immediately after initialization caused race condition
+    // where newly uploaded images were deleted before they could be referenced.
     
     logger.info(`Setting up periodic club cache updates every ${CLUB_CHECK_INTERVAL_SECONDS} seconds.`);
     setInterval(() => {

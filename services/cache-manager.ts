@@ -293,18 +293,45 @@ export async function cleanupOrphanedS3Images(): Promise<void> {
     const allActivityRedisKeys = await getAllActivityKeys();
     const S3_ENDPOINT = process.env.S3_ENDPOINT;
 
+    let photoCount = 0;
+    let httpUrlCount = 0;
+    let base64Count = 0;
+    let nullCount = 0;
+    let addedToSet = 0;
+    let sampleHttpUrl = null;
+    let sampleBase64Url = null;
+    
     for (const redisKey of allActivityRedisKeys) {
       const activityId = redisKey.substring(ACTIVITY_KEY_PREFIX.length);
       const activityData = await getActivityData(activityId);
       
-      if (activityData && 
-        typeof activityData.photo === 'string' && 
-        activityData.photo.startsWith('http')) {
-        referencedS3Urls.add(activityData.photo);
+      if (activityData) {
+        if (activityData.photo) {
+          photoCount++;
+          if (typeof activityData.photo === 'string') {
+            if (activityData.photo.startsWith('http')) {
+              httpUrlCount++;
+              referencedS3Urls.add(activityData.photo);
+              addedToSet++;
+              if (!sampleHttpUrl) sampleHttpUrl = activityData.photo;
+            } else if (activityData.photo.startsWith('data:image')) {
+              base64Count++;
+              if (!sampleBase64Url) sampleBase64Url = activityData.photo.substring(0, 50) + '...';
+            }
+          }
+        } else {
+          nullCount++;
+        }
       }
     }
     
     logger.info(`Found ${referencedS3Urls.size} unique S3 URLs referenced in Redis.`);
+    logger.info(`Photo stats: ${httpUrlCount} HTTP URLs, ${base64Count} base64, ${nullCount} null/empty out of ${photoCount} activities with photo field.`);
+    if (sampleHttpUrl) logger.debug(`Sample HTTP URL: ${sampleHttpUrl}`);
+    if (sampleBase64Url) logger.debug(`Sample base64 URL: ${sampleBase64Url}`);
+    if (httpUrlCount === 0 && base64Count > 0) {
+      logger.error('CRITICAL: All photos are base64 format! S3 upload may be failing or photo field not updated.');
+    }
 
     const s3ObjectKeys = await listS3Objects(s3ObjectListPrefix);
     if (!s3ObjectKeys || s3ObjectKeys.length === 0) {
@@ -315,6 +342,33 @@ export async function cleanupOrphanedS3Images(): Promise<void> {
     logger.debug(`Found ${s3ObjectKeys.length} objects in S3 under prefix "${s3ObjectListPrefix}".`);
 
     const orphanedObjectKeys: string[] = [];
+    let matchedCount = 0;
+    let notFoundCount = 0;
+    let firstMismatchExample = null;
+    
+    for (const objectKey of s3ObjectKeys) {
+      const s3Url = constructS3Url(objectKey);
+      if (s3Url) {
+        if (referencedS3Urls.has(s3Url)) {
+          matchedCount++;
+        } else {
+          notFoundCount++;
+          if (!firstMismatchExample) {
+            firstMismatchExample = { objectKey, s3Url };
+          }
+        }
+      }
+    }
+    
+    logger.info(`S3 URL matching: ${matchedCount} matched, ${notFoundCount} not found (orphaned).`);
+    if (notFoundCount > 0 && firstMismatchExample) {
+      logger.debug(`Example orphaned object: key="${firstMismatchExample.objectKey}", url="${firstMismatchExample.s3Url}"`);
+    }
+    if (matchedCount === 0 && s3ObjectKeys.length > 0 && referencedS3Urls.size > 0) {
+      logger.error('CRITICAL: No matches found! Sample from set: ' + [...referencedS3Urls].slice(0, 3).join(', '));
+      logger.error('CRITICAL: Sample from S3 keys: ' + s3ObjectKeys.slice(0, 3).map(k => constructS3Url(k)).join(', '));
+    }
+
     for (const objectKey of s3ObjectKeys) {
       const s3Url = constructS3Url(objectKey);
       if (s3Url && !referencedS3Urls.has(s3Url)) {
