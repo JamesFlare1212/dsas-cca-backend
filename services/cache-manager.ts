@@ -11,7 +11,7 @@ import {
   getAllActivityKeys,
   ACTIVITY_KEY_PREFIX
 } from './redis-service';
-import { uploadImageFromBase64, listS3Objects, deleteS3Objects, constructS3Url } from './s3-service';
+import { uploadImageFromBase64, listS3Objects, constructS3Url } from './s3-service';
 import { extractBase64Image } from '../utils/image-processor';
 import { logger } from '../utils/logger';
 import { BatchProcessor, executeWithConcurrencyAndProgress } from '../utils/semaphore';
@@ -231,7 +231,6 @@ export async function updateStaleClubs(): Promise<void> {
   
   if (staleActivityIds.length === 0) {
     logger.info('No stale activities found. Skipping update.');
-    await cleanupOrphanedS3Images();
     logger.info('Stale club check finished.');
     return;
   }
@@ -260,8 +259,6 @@ export async function updateStaleClubs(): Promise<void> {
   
   // Process stale activities concurrently
   await processor.process(staleActivityIds);
-  
-  await cleanupOrphanedS3Images();
   
   logger.info('Stale club check finished.');
 }
@@ -309,130 +306,5 @@ export async function initializeOrUpdateStaffCache(forceUpdate: boolean = false)
     }
   } catch (error) {
     logger.error('Error initializing or updating staff cache:', error);
-  }
-}
-
-/**
- * Clean up orphaned S3 images
- * 
- * FIX: Changed from URL-based matching to object key-based matching.
- * Previous bug: URL mismatch between S3_PUBLIC_URL and S3_ENDPOINT caused
- * valid images to be incorrectly marked as orphaned and deleted.
- * 
- * New approach: Extract object keys from Redis-stored URLs and compare
- * directly with S3 object keys. This is immune to URL configuration changes.
- */
-export async function cleanupOrphanedS3Images(): Promise<void> {
-  logger.info('Starting S3 orphan image cleanup...');
-  const s3ObjectListPrefix = S3_IMAGE_PREFIX ? `${S3_IMAGE_PREFIX}/` : '';
-
-  try {
-    const referencedObjectKeys = new Set<string>();
-    const allActivityRedisKeys = await getAllActivityKeys();
-
-    let photoCount = 0;
-    let httpUrlCount = 0;
-    let base64Count = 0;
-    let nullCount = 0;
-    let extractedKeyCount = 0;
-    let failedExtractionCount = 0;
-    let sampleHttpUrl = null;
-    let sampleBase64Url = null;
-    let sampleExtractedKey = null;
-    
-    for (const redisKey of allActivityRedisKeys) {
-      const activityId = redisKey.substring(ACTIVITY_KEY_PREFIX.length);
-      const activityData = await getActivityData(activityId);
-      
-      if (activityData) {
-        if (activityData.photo) {
-          photoCount++;
-          if (typeof activityData.photo === 'string') {
-            if (activityData.photo.startsWith('http')) {
-              httpUrlCount++;
-              const objectKey = extractObjectKeyFromUrl(activityData.photo);
-              if (objectKey) {
-                referencedObjectKeys.add(objectKey);
-                extractedKeyCount++;
-                if (!sampleExtractedKey) sampleExtractedKey = { url: activityData.photo, key: objectKey };
-              } else {
-                failedExtractionCount++;
-              }
-              if (!sampleHttpUrl) sampleHttpUrl = activityData.photo;
-            } else if (activityData.photo.startsWith('data:image')) {
-              base64Count++;
-              if (!sampleBase64Url) sampleBase64Url = activityData.photo.substring(0, 50) + '...';
-            }
-          }
-        } else {
-          nullCount++;
-        }
-      }
-    }
-    
-    logger.info(`Found ${referencedObjectKeys.size} unique S3 object keys referenced in Redis.`);
-    logger.info(`Photo stats: ${httpUrlCount} HTTP URLs, ${base64Count} base64, ${nullCount} null/empty out of ${photoCount} activities with photo field.`);
-    logger.info(`Key extraction: ${extractedKeyCount} succeeded, ${failedExtractionCount} failed.`);
-    if (sampleHttpUrl) logger.debug(`Sample HTTP URL: ${sampleHttpUrl}`);
-    if (sampleExtractedKey) logger.debug(`Sample extracted key: URL="${sampleExtractedKey.url}" → key="${sampleExtractedKey.key}"`);
-    if (sampleBase64Url) logger.debug(`Sample base64 URL: ${sampleBase64Url}`);
-    if (httpUrlCount === 0 && base64Count > 0) {
-      logger.error('CRITICAL: All photos are base64 format! S3 upload may be failing or photo field not updated.');
-    }
-    if (failedExtractionCount > 0) {
-      logger.warn(`Failed to extract ${failedExtractionCount} object keys from URLs. These images won't be protected from deletion.`);
-    }
-
-    const s3ObjectKeys = await listS3Objects(s3ObjectListPrefix);
-    if (!s3ObjectKeys || s3ObjectKeys.length === 0) {
-      logger.info(`No images found in S3 under prefix "${s3ObjectListPrefix}". Nothing to clean up.`);
-      return;
-    }
-    
-    logger.debug(`Found ${s3ObjectKeys.length} objects in S3 under prefix "${s3ObjectListPrefix}".`);
-
-    const orphanedObjectKeys: string[] = [];
-    let matchedCount = 0;
-    let notFoundCount = 0;
-    let firstOrphanExample = null;
-    
-    for (const objectKey of s3ObjectKeys) {
-      if (referencedObjectKeys.has(objectKey)) {
-        matchedCount++;
-      } else {
-        notFoundCount++;
-        if (!firstOrphanExample) {
-          firstOrphanExample = objectKey;
-        }
-      }
-    }
-    
-    logger.info(`S3 object key matching: ${matchedCount} matched, ${notFoundCount} not found (orphaned).`);
-    if (notFoundCount > 0 && firstOrphanExample) {
-      logger.debug(`Example orphaned object: key="${firstOrphanExample}"`);
-    }
-    if (matchedCount === 0 && s3ObjectKeys.length > 0 && referencedObjectKeys.size > 0) {
-      logger.error('CRITICAL: No matches found between S3 objects and Redis references!');
-      logger.error('CRITICAL: Sample from Redis keys: ' + [...referencedObjectKeys].slice(0, 3).join(', '));
-      logger.error('CRITICAL: Sample from S3 keys: ' + s3ObjectKeys.slice(0, 3).join(', '));
-      logger.error('CRITICAL: This indicates a serious bug in object key extraction or S3 listing.');
-    }
-
-    for (const objectKey of s3ObjectKeys) {
-      if (!referencedObjectKeys.has(objectKey)) {
-        orphanedObjectKeys.push(objectKey);
-      }
-    }
-
-    if (orphanedObjectKeys.length > 0) {
-      logger.info(`Found ${orphanedObjectKeys.length} orphaned S3 objects to delete. Submitting deletion...`);
-      await deleteS3Objects(orphanedObjectKeys);
-    } else {
-      logger.info('No orphaned S3 images found after comparison.');
-    }
-
-    logger.info('S3 orphan image cleanup finished.');
-  } catch (error) {
-    logger.error('Error during S3 orphan image cleanup:', error);
   }
 }

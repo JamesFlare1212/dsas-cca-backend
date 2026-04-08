@@ -150,41 +150,6 @@ export async function listS3Objects(prefix: string): Promise<string[]> {
 }
 
 /**
- * Deletes multiple objects from S3.
- * @param objectKeysArray - Array of object keys to delete
- * @returns True if successful or partially successful, false on major error
- */
-export async function deleteS3Objects(objectKeysArray: string[]): Promise<boolean> {
-  if (!s3Client) {
-    logger.warn('S3 client not configured. Cannot delete objects.');
-    return false;
-  }
-  if (!objectKeysArray || objectKeysArray.length === 0) {
-    logger.info('No objects to delete from S3.');
-    return true;
-  }
-  try {
-    let successCount = 0;
-    let errorCount = 0;
-    
-    for (const key of objectKeysArray) {
-      try {
-        await s3Client.delete(key);
-        successCount++;
-      } catch (error) {
-        errorCount++;
-        logger.error(`Failed to delete object ${key}:`, error);
-      }
-    }
-    logger.info(`Deleted ${successCount} objects from S3. Failed: ${errorCount}`);
-    return errorCount === 0; // True if all succeeded
-  } catch (error) {
-    logger.error('S3 DeleteObjects Error:', error);
-    return false;
-  }
-}
-
-/**
  * Constructs the public S3 URL for an object key.
  * Uses S3_PUBLIC_URL if set (reverse proxy scenario), otherwise uses S3_ENDPOINT.
  * @param objectKey - The key of the object in S3
