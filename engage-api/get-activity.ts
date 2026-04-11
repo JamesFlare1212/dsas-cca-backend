@@ -79,14 +79,16 @@ async function getActivityDetailsRaw(
       if (response.status !== 200) {
         logger.error(`Non-200 status ${response.status} for activity ${activityId}. NOT updating cache to preserve local data.`);
         
-        // On 5xx errors, set flag to validate cookie on next request
-        // Backend may be in degraded state and invalidated sessions
+        // IMPORTANT: 5xx errors are actually early signs of cookie expiration
+        // The backend returns 500 when cookie is expired but not yet invalidated
+        // It takes several hours before it returns 401/403
+        // So on 5xx, we should immediately re-login, not wait for next request
         if (response.status >= 500 && response.status < 600) {
-          logger.warn(`Server error ${response.status} - will validate cookie on next request.`);
-          shouldValidateCookieOnNextRequest = true;
+          logger.warn(`Server error ${response.status} - this is likely cookie expiration. Throwing AuthenticationError to trigger immediate re-login.`);
+          throw new AuthenticationError(`Received ${response.status} for activity ${activityId} - likely expired cookie`, response.status);
         }
         
-        // Return null immediately on non-200, don't retry
+        // Return null immediately on other non-200 errors
         return null;
       }
       
@@ -115,12 +117,13 @@ async function getActivityDetailsRaw(
 
       if (error.response) {
         logger.error(`Status: ${error.response.status}, Data (getActivityDetailsRaw): ${ String(error.response.data).slice(0,100)}...`);
-        // CRITICAL: 5xx errors should NOT update cache, return null immediately
+        // IMPORTANT: 5xx errors are actually early signs of cookie expiration
+        // The backend returns 500 when cookie is expired but not yet invalidated
+        // It takes several hours before it returns 401/403
+        // So on 5xx, throw AuthenticationError to trigger immediate re-login
         if (error.response.status >= 500 && error.response.status < 600) {
-          logger.error(`Server error ${error.response.status} - preserving local cache, not updating.`);
-          // Set flag to validate cookie on next request
-          shouldValidateCookieOnNextRequest = true;
-          return null;
+          logger.warn(`Server error ${error.response.status} - this is likely cookie expiration. Throwing AuthenticationError to trigger immediate re-login.`);
+          throw new AuthenticationError(`Received ${error.response.status} for activity ${activityId} - likely expired cookie`, error.response.status);
         }
       }
       if (attempt === maxRetries - 1) {
@@ -133,9 +136,6 @@ async function getActivityDetailsRaw(
   }
   return null;
 }
-
-// Flag to track if we need to validate cookies after server errors
-let shouldValidateCookieOnNextRequest = false;
 
 /**
  * Main exported function. Handles cookie caching, validation, re-authentication, and fetches activity details.
@@ -181,70 +181,7 @@ export async function fetchActivityData(
     return null;
   }
 
-  // Validate cookie after previous 5xx error (backend may have invalidated sessions)
-  if (shouldValidateCookieOnNextRequest) {
-    logger.info('Validating cookie after previous server error...');
-    shouldValidateCookieOnNextRequest = false;
-    // Simple validation: try to fetch a known activity (ID 3350)
-    const testResponse = await getActivityDetailsRaw('3350', currentCookie, 1, 5000);
-    if (!testResponse) {
-      // Check if this is still a server error (5xx) - if so, it's an outage, don't re-login
-      // Just preserve existing cookie and return null
-      logger.warn('Cookie validation returned null. Checking if server is still down...');
-      
-      // Try one more time with explicit status check
-      try {
-        const url = 'https://engage.nkcswx.cn/Services/ActivitiesService.asmx/GetActivityDetails';
-        const headers = {
-          'Content-Type': 'application/json; charset=UTF-8',
-          'Cookie': currentCookie,
-          'User-Agent': 'Mozilla/5.0 (Bun DSAS-CCA Cookie Validator)',
-          'X-Requested-With': 'XMLHttpRequest'
-        };
-        const payload = { "activityID": "3350" };
-        const validationResponse = await axios.post(url, payload, {
-          headers,
-          timeout: 5000,
-          responseType: 'text'
-        });
-        
-        if (validationResponse.status >= 500 && validationResponse.status < 600) {
-          // Server still returning 5xx - it's an outage, preserve cookie and don't re-login
-          logger.warn('Server still returning 5xx during validation - treating as server outage, preserving cookie.');
-          return null;
-        } else if (validationResponse.status === 401 || validationResponse.status === 403) {
-          // Cookie is invalid, re-login
-          logger.warn('Cookie validation failed with 4xx. Re-login required.');
-          await clearCookieCache();
-          try {
-            currentCookie = await getCompleteCookies(userName, userPwd);
-            const cookies = await loadCachedCookies();
-            if (cookies) {
-              await saveCookiesToCache(cookies);
-            }
-            logger.info('Re-login completed due to cookie validation failure.');
-          } catch (loginError) {
-            logger.error(`Re-login failed: ${(loginError as Error).message}`);
-            return null;
-          }
-        } else {
-          // Some other error, preserve cookie
-          logger.warn('Cookie validation failed with unexpected status. Preserving existing cookie.');
-          return null;
-        }
-      } catch (validationError: any) {
-        // Network error or timeout during validation - treat as server issue, preserve cookie
-        if (validationError.response && validationError.response.status >= 500) {
-          logger.warn('Server error during cookie validation - treating as outage, preserving cookie.');
-        } else {
-          logger.warn(`Network error during cookie validation: ${validationError.message}. Preserving existing cookie.`);
-        }
-        return null;
-      }
-    } else {
-      logger.info('Cookie validation successful after server error.');
-    }
-  }
+
 
   logger.debug('Using cached cookie for API request.');
   
