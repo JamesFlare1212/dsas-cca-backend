@@ -185,20 +185,60 @@ export async function fetchActivityData(
   if (shouldValidateCookieOnNextRequest) {
     logger.info('Validating cookie after previous server error...');
     shouldValidateCookieOnNextRequest = false;
-    // Simple validation: try to fetch a known activity
-    const testResponse = await getActivityDetailsRaw('1', currentCookie, 1, 5000);
+    // Simple validation: try to fetch a known activity (ID 3350)
+    const testResponse = await getActivityDetailsRaw('3350', currentCookie, 1, 5000);
     if (!testResponse) {
-      logger.warn('Cookie validation failed after server error. Re-login required.');
-      await clearCookieCache();
+      // Check if this is still a server error (5xx) - if so, it's an outage, don't re-login
+      // Just preserve existing cookie and return null
+      logger.warn('Cookie validation returned null. Checking if server is still down...');
+      
+      // Try one more time with explicit status check
       try {
-        currentCookie = await getCompleteCookies(userName, userPwd);
-        const cookies = await loadCachedCookies();
-        if (cookies) {
-          await saveCookiesToCache(cookies);
+        const url = 'https://engage.nkcswx.cn/Services/ActivitiesService.asmx/GetActivityDetails';
+        const headers = {
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Cookie': currentCookie,
+          'User-Agent': 'Mozilla/5.0 (Bun DSAS-CCA Cookie Validator)',
+          'X-Requested-With': 'XMLHttpRequest'
+        };
+        const payload = { "activityID": "3350" };
+        const validationResponse = await axios.post(url, payload, {
+          headers,
+          timeout: 5000,
+          responseType: 'text'
+        });
+        
+        if (validationResponse.status >= 500 && validationResponse.status < 600) {
+          // Server still returning 5xx - it's an outage, preserve cookie and don't re-login
+          logger.warn('Server still returning 5xx during validation - treating as server outage, preserving cookie.');
+          return null;
+        } else if (validationResponse.status === 401 || validationResponse.status === 403) {
+          // Cookie is invalid, re-login
+          logger.warn('Cookie validation failed with 4xx. Re-login required.');
+          await clearCookieCache();
+          try {
+            currentCookie = await getCompleteCookies(userName, userPwd);
+            const cookies = await loadCachedCookies();
+            if (cookies) {
+              await saveCookiesToCache(cookies);
+            }
+            logger.info('Re-login completed due to cookie validation failure.');
+          } catch (loginError) {
+            logger.error(`Re-login failed: ${(loginError as Error).message}`);
+            return null;
+          }
+        } else {
+          // Some other error, preserve cookie
+          logger.warn('Cookie validation failed with unexpected status. Preserving existing cookie.');
+          return null;
         }
-        logger.info('Re-login completed due to cookie validation failure.');
-      } catch (loginError) {
-        logger.error(`Re-login failed: ${(loginError as Error).message}`);
+      } catch (validationError: any) {
+        // Network error or timeout during validation - treat as server issue, preserve cookie
+        if (validationError.response && validationError.response.status >= 500) {
+          logger.warn('Server error during cookie validation - treating as outage, preserving cookie.');
+        } else {
+          logger.warn(`Network error during cookie validation: ${validationError.message}. Preserving existing cookie.`);
+        }
         return null;
       }
     } else {
