@@ -78,9 +78,15 @@ async function getActivityDetailsRaw(
       // CRITICAL: Only accept HTTP 200. Reject all other status codes including 5xx
       if (response.status !== 200) {
         logger.error(`Non-200 status ${response.status} for activity ${activityId}. NOT updating cache to preserve local data.`);
-        if (attempt === maxRetries - 1) {
-          logger.error(`All ${maxRetries} retries failed with non-200 status for activity ${activityId}.`);
+        
+        // On 5xx errors, set flag to validate cookie on next request
+        // Backend may be in degraded state and invalidated sessions
+        if (response.status >= 500 && response.status < 600) {
+          logger.warn(`Server error ${response.status} - will validate cookie on next request.`);
+          shouldValidateCookieOnNextRequest = true;
         }
+        
+        // Return null immediately on non-200, don't retry
         return null;
       }
       
@@ -97,6 +103,7 @@ async function getActivityDetailsRaw(
         logger.error(`Unexpected API response structure for activity ${activityId}.`);
       }
     } catch (error: any) {
+      
       // Only treat 401 (Unauthorized) and 403 (Forbidden) as authentication errors
       // 404 (Not Found) is valid - activity doesn't exist
       // Other 4xx/5xx errors should not trigger re-authentication
@@ -108,20 +115,27 @@ async function getActivityDetailsRaw(
 
       if (error.response) {
         logger.error(`Status: ${error.response.status}, Data (getActivityDetailsRaw): ${ String(error.response.data).slice(0,100)}...`);
-        // CRITICAL: 5xx errors should NOT update cache
+        // CRITICAL: 5xx errors should NOT update cache, return null immediately
         if (error.response.status >= 500 && error.response.status < 600) {
           logger.error(`Server error ${error.response.status} - preserving local cache, not updating.`);
+          // Set flag to validate cookie on next request
+          shouldValidateCookieOnNextRequest = true;
+          return null;
         }
       }
       if (attempt === maxRetries - 1) {
         logger.error(`All ${maxRetries} retries failed for activity ${activityId}.`);
-        throw error;
+        // Don't throw on network/timeout errors, just return null to preserve cache
+        return null;
       }
       await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
     }
   }
   return null;
 }
+
+// Flag to track if we need to validate cookies after server errors
+let shouldValidateCookieOnNextRequest = false;
 
 /**
  * Main exported function. Handles cookie caching, validation, re-authentication, and fetches activity details.
@@ -146,7 +160,7 @@ export async function fetchActivityData(
   }
 
   // Optimization: Skip pre-validation, directly request data
-  // Only validate/re-login when we get 4xx error (fail-fast strategy)
+  // Only validate/re-login when we get 4xx error OR after 5xx (backend may be in degraded state)
   if (!currentCookie) {
     logger.info('No cached cookie found. Attempting login...');
     try {
@@ -167,6 +181,31 @@ export async function fetchActivityData(
     return null;
   }
 
+  // Validate cookie after previous 5xx error (backend may have invalidated sessions)
+  if (shouldValidateCookieOnNextRequest) {
+    logger.info('Validating cookie after previous server error...');
+    shouldValidateCookieOnNextRequest = false;
+    // Simple validation: try to fetch a known activity
+    const testResponse = await getActivityDetailsRaw('1', currentCookie, 1, 5000);
+    if (!testResponse) {
+      logger.warn('Cookie validation failed after server error. Re-login required.');
+      await clearCookieCache();
+      try {
+        currentCookie = await getCompleteCookies(userName, userPwd);
+        const cookies = await loadCachedCookies();
+        if (cookies) {
+          await saveCookiesToCache(cookies);
+        }
+        logger.info('Re-login completed due to cookie validation failure.');
+      } catch (loginError) {
+        logger.error(`Re-login failed: ${(loginError as Error).message}`);
+        return null;
+      }
+    } else {
+      logger.info('Cookie validation successful after server error.');
+    }
+  }
+
   logger.debug('Using cached cookie for API request.');
   
   try {
@@ -177,6 +216,7 @@ export async function fetchActivityData(
       const parsedOuter = JSON.parse(rawActivityDetailsString);
       return JSON.parse(parsedOuter.d);
     }
+    // Check if this was a 5xx error and set flag for cookie validation
     logger.warn(`No data returned from getActivityDetailsRaw for activity ${activityId}, but no authentication error was thrown.`);
     return null;
   } catch (error) {

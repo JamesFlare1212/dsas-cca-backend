@@ -14,7 +14,7 @@ import {
 import { uploadImageFromBase64, listS3Objects, constructS3Url } from './s3-service';
 import { extractBase64Image } from '../utils/image-processor';
 import { logger } from '../utils/logger';
-
+import { BatchProcessor } from '../utils/semaphore';
 
 import type { ActivityData } from '../models/activity';
 
@@ -30,38 +30,8 @@ const STAFF_UPDATE_INTERVAL_MINS = parseInt(process.env.STAFF_UPDATE_INTERVAL_MI
 const FIXED_STAFF_ACTIVITY_ID = process.env.FIXED_STAFF_ACTIVITY_ID;
 const S3_IMAGE_PREFIX = (process.env.S3_PUBLIC_URL_PREFIX || 'files').replace(/\/$/, '');
 
-/**
- * Extracts S3 object key from a public URL.
- * Handles both S3_PUBLIC_URL and S3_ENDPOINT formats.
- * 
- * Examples:
- * - https://cdn.example.com/bucket/files/abc123.avif → files/abc123.avif
- * - https://s3.amazonaws.com/bucket/files/abc123.avif → files/abc123.avif
- * 
- * @param url - The full S3 public URL
- * @returns The object key (e.g., "files/abc123.avif") or null if parsing fails
- */
-function extractObjectKeyFromUrl(url: string): string | null {
-  try {
-    const urlObj = new URL(url);
-    const path = urlObj.pathname;
-    
-    const parts = path.replace(/^\//, '').split('/').filter(p => p);
-    
-    if (parts.length >= 2) {
-      const key = parts.slice(1).join('/');
-      return key;
-    }
-    
-    logger.warn(`Failed to extract object key from URL: ${url} - insufficient path parts`);
-    return null;
-  } catch (error) {
-    logger.warn(`Failed to parse URL: ${url}`, error);
-    return null;
-  }
-}
-
-// Crawler configuration
+// Crawler concurrency configuration
+const CONCURRENT_API_CALLS = parseInt(process.env.CONCURRENT_API_CALLS || '8', 10);
 const CRAWLER_REQUEST_TIMEOUT_MS = parseInt(process.env.CRAWLER_REQUEST_TIMEOUT_MS || '25000', 10);
 const CRAWLER_MAX_RETRIES = parseInt(process.env.CRAWLER_MAX_RETRIES || '3', 10);
 const CRAWLER_RETRY_DELAY_MS = parseInt(process.env.CRAWLER_RETRY_DELAY_MS || '1000', 10);
@@ -172,10 +142,11 @@ async function processSingleActivity(activityId: string): Promise<void> {
 
 /**
  * Initialize the club cache by scanning through all activity IDs
- * Processed sequentially
+ * Processed concurrently with controlled parallelism
  */
 export async function initializeClubCache(): Promise<void> {
   logger.info(`Starting initial club cache population from ID ${MIN_ACTIVITY_ID_SCAN} to ${MAX_ACTIVITY_ID_SCAN}`);
+  logger.info(`Concurrency: ${CONCURRENT_API_CALLS} parallel requests`);
   
   const totalIds = MAX_ACTIVITY_ID_SCAN - MIN_ACTIVITY_ID_SCAN + 1;
   let successCount = 0;
@@ -188,23 +159,30 @@ export async function initializeClubCache(): Promise<void> {
     (_, i) => String(MIN_ACTIVITY_ID_SCAN + i)
   );
   
-  // Process all activities sequentially
-  for (let i = 0; i < activityIds.length; i++) {
-    const activityId = activityIds[i]!;
-    try {
+  // Create batch processor with concurrency control
+  const processor = new BatchProcessor(
+    async (activityId: string) => {
       await processSingleActivity(activityId);
-      successCount++;
-    } catch (error) {
-      errorCount++;
-      logger.error(`Error processing activity ID ${activityId}:`, error);
+      return activityId;
+    },
+    CONCURRENT_API_CALLS,
+    {
+      onError: (error, activityId) => {
+        errorCount++;
+        logger.error(`Error processing activity ID ${activityId}:`, error);
+      },
+      onProgress: (completed, total) => {
+        if (completed % 100 === 0 || completed === total) {
+          const mem = process.memoryUsage();
+          logger.info(`Progress: ${completed}/${total} (${Math.round(completed/total*100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed/1024/1024)}MB | Concurrent: ${CONCURRENT_API_CALLS}`);
+        }
+      }
     }
-    
-    // Log progress every 100 activities or at completion
-    if ((i + 1) % 100 === 0 || i === activityIds.length - 1) {
-      const mem = process.memoryUsage();
-      logger.info(`Progress: ${i + 1}/${totalIds} (${Math.round((i + 1) / totalIds * 100)}%) - Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount} | Heap: ${Math.round(mem.heapUsed / 1024 / 1024)}MB`);
-    }
-  }
+  );
+  
+  // Process all activities concurrently
+  const results = await processor.process(activityIds);
+  successCount = results.length;
   
   logger.info(`Initial club cache population finished.`);
   logger.info(`Summary: Total: ${totalIds}, Processed: ${activityIds.length}, Success: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`);
@@ -212,10 +190,11 @@ export async function initializeClubCache(): Promise<void> {
 
 /**
  * Update stale clubs in the cache
- * Processed sequentially
+ * Processed concurrently with controlled parallelism
  */
 export async function updateStaleClubs(): Promise<void> {
   logger.info('Starting stale club check...');
+  logger.info(`Concurrency: ${CONCURRENT_API_CALLS} parallel requests`);
   const now = Date.now();
   const updateIntervalMs = CLUB_UPDATE_INTERVAL_MINS * 60 * 1000;
   const activityKeys = await getAllActivityKeys();
@@ -245,21 +224,28 @@ export async function updateStaleClubs(): Promise<void> {
   
   logger.info(`Found ${staleActivityIds.length} stale activities to update.`);
   
-  // Process stale activities sequentially
-  for (let i = 0; i < staleActivityIds.length; i++) {
-    const activityId = staleActivityIds[i]!;
-    try {
+  // Create batch processor for concurrent updates
+  const processor = new BatchProcessor(
+    async (activityId: string) => {
       logger.debug(`Updating stale activity ${activityId}`);
       await processAndCacheActivity(activityId);
-    } catch (error) {
-      logger.error(`Error updating stale activity ${activityId}:`, error);
+      return activityId;
+    },
+    CONCURRENT_API_CALLS,
+    {
+      onError: (error, activityId) => {
+        logger.error(`Error updating stale activity ${activityId}:`, error);
+      },
+      onProgress: (completed, total) => {
+        if (completed % 10 === 0 || completed === total) {
+          logger.info(`Update progress: ${completed}/${total} (${Math.round(completed/total*100)}%)`);
+        }
+      }
     }
-    
-    // Log progress every 10 activities or at completion
-    if ((i + 1) % 10 === 0 || i === staleActivityIds.length - 1) {
-      logger.info(`Update progress: ${i + 1}/${staleActivityIds.length} (${Math.round((i + 1) / staleActivityIds.length * 100)}%)`);
-    }
-  }
+  );
+  
+  // Process stale activities concurrently
+  await processor.process(staleActivityIds);
   
   logger.info('Stale club check finished.');
 }
