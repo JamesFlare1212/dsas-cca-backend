@@ -79,16 +79,19 @@ async function getActivityDetailsRaw(
       if (response.status !== 200) {
         logger.error(`Non-200 status ${response.status} for activity ${activityId}. NOT updating cache to preserve local data.`);
         
-        // IMPORTANT: 5xx errors are actually early signs of cookie expiration
-        // The backend returns 500 when cookie is expired but not yet invalidated
-        // It takes several hours before it returns 401/403
-        // So on 5xx, we should immediately re-login, not wait for next request
-        if (response.status >= 500 && response.status < 600) {
-          logger.warn(`Server error ${response.status} - this is likely cookie expiration. Throwing AuthenticationError to trigger immediate re-login.`);
-          throw new AuthenticationError(`Received ${response.status} for activity ${activityId} - likely expired cookie`, response.status);
+        // IMPORTANT: Only 500 is cookie expiration. Other 5xx (502/503/504) are real server outages.
+        // The backend returns 500 when cookie is expired but session not yet invalidated.
+        // It takes several hours before it returns 401/403.
+        // 502/503/504 are real server errors (bad gateway, service unavailable, gateway timeout)
+        if (response.status === 500) {
+          logger.warn(`Server error 500 - this is cookie expiration. Throwing AuthenticationError to trigger immediate re-login.`);
+          throw new AuthenticationError(`Received 500 for activity ${activityId} - expired cookie`, 500);
+        } else if (response.status >= 500 && response.status < 600) {
+          // Real server outage (502/503/504), preserve cache and don't re-login
+          logger.error(`Real server outage ${response.status} - preserving local cache, not re-login.`);
         }
         
-        // Return null immediately on other non-200 errors
+        // Return null immediately on non-200 errors
         return null;
       }
       
@@ -117,13 +120,15 @@ async function getActivityDetailsRaw(
 
       if (error.response) {
         logger.error(`Status: ${error.response.status}, Data (getActivityDetailsRaw): ${ String(error.response.data).slice(0,100)}...`);
-        // IMPORTANT: 5xx errors are actually early signs of cookie expiration
-        // The backend returns 500 when cookie is expired but not yet invalidated
-        // It takes several hours before it returns 401/403
-        // So on 5xx, throw AuthenticationError to trigger immediate re-login
-        if (error.response.status >= 500 && error.response.status < 600) {
-          logger.warn(`Server error ${error.response.status} - this is likely cookie expiration. Throwing AuthenticationError to trigger immediate re-login.`);
-          throw new AuthenticationError(`Received ${error.response.status} for activity ${activityId} - likely expired cookie`, error.response.status);
+        // IMPORTANT: Only 500 is cookie expiration. Other 5xx (502/503/504) are real server outages.
+        // The backend returns 500 when cookie is expired but session not yet invalidated.
+        // 502/503/504 are real server errors (bad gateway, service unavailable, gateway timeout)
+        if (error.response.status === 500) {
+          logger.warn(`Server error 500 - this is cookie expiration. Throwing AuthenticationError to trigger immediate re-login.`);
+          throw new AuthenticationError(`Received 500 for activity ${activityId} - expired cookie`, 500);
+        } else if (error.response.status >= 500 && error.response.status < 600) {
+          // Real server outage (502/503/504), preserve cache and don't re-login
+          logger.error(`Real server outage ${error.response.status} - preserving local cache, not re-login.`);
         }
       }
       if (attempt === maxRetries - 1) {
