@@ -52,14 +52,33 @@ async function processAndCacheActivity(activityId: string, forceUpdate: boolean 
       throw new Error('API username or password not configured');
     }
     
-    // Add timeout protection for the entire fetch operation
+    // Add timeout protection via AbortController - properly cancels orphaned fetches
     logger.debug(`Fetching activity data for ID: ${activityId}`);
-    const activityJson = await Promise.race([
-      fetchActivityData(activityId, USERNAME, PASSWORD, false),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error(`Timeout fetching activity ${activityId} after ${CRAWLER_REQUEST_TIMEOUT_MS}ms`)), CRAWLER_REQUEST_TIMEOUT_MS + 5000)
-      )
-    ]);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      CRAWLER_REQUEST_TIMEOUT_MS + 5000
+    );
+
+    let activityJson: any = null;
+    try {
+      activityJson = await fetchActivityData(
+        activityId,
+        USERNAME,
+        PASSWORD,
+        false,
+        controller.signal
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (controller.signal.aborted) {
+      logger.warn(`Request for activity ${activityId} timed out after ${CRAWLER_REQUEST_TIMEOUT_MS + 5000}ms. Cancelling orphaned fetch.`);
+      // Preserve existing cache on timeout
+      const existingData = await getActivityData(activityId);
+      return existingData || { lastCheck: new Date().toISOString(), error: `Timeout after ${CRAWLER_REQUEST_TIMEOUT_MS + 5000}ms` };
+    }
     let structuredActivity: ActivityData;
 
     if (!activityJson) {

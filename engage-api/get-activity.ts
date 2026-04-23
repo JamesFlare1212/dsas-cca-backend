@@ -1,12 +1,15 @@
 // engage-api/get-activity.ts
-import axios from 'axios';
+import axios, { type AxiosRequestConfig } from 'axios';
 import { logger } from '../utils/logger';
 import {
   ensureSingleLogin,
-  loadCachedCookies,
   saveCookiesToCache,
   clearCookieCache,
-  getCachedCookieString
+  getCachedCookieString,
+  backupCookies,
+  restoreCookieBackup,
+  tryAcquireAuthLock,
+  releaseAuthCooldown
 } from '../services/playwright-auth';
 
 // Define interfaces for our data structures
@@ -51,7 +54,8 @@ async function getActivityDetailsRaw(
   activityId: string,
   cookies: string,
   maxRetries: number = 3,
-  timeoutMilliseconds: number = 10000
+  timeoutMilliseconds: number = 10000,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const url = 'https://engage.nkcswx.cn/Services/ActivitiesService.asmx/GetActivityDetails';
   const headers = {
@@ -65,13 +69,17 @@ async function getActivityDetailsRaw(
   };
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (signal?.aborted) {
+      logger.debug(`Activity ${activityId} aborted before attempt ${attempt + 1}`);
+      return null;
+    }
     try {
       logger.debug(`Attempt ${attempt + 1}/${maxRetries} for activity ${activityId} - Sending POST request to ${url}`);
       const response = await axios.post(url, payload, {
         headers,
         timeout: timeoutMilliseconds,
         responseType: 'text',
-        // Add additional timeout safety
+        signal,
         maxRedirects: 5
       });
       
@@ -155,6 +163,7 @@ export async function fetchActivityData(
   userName: string,
   userPwd: string,
   forceLogin: boolean = false,
+  signal?: AbortSignal
 ): Promise<any | null> {
   let currentCookie = forceLogin ? null : await getCachedCookieString();
 
@@ -164,17 +173,10 @@ export async function fetchActivityData(
     currentCookie = null;
   }
 
-  // Optimization: Skip pre-validation, directly request data
-  // Only validate/re-login when we get 4xx error OR after 5xx (backend may be in degraded state)
   if (!currentCookie) {
     logger.info('No cached cookie found. Attempting login...');
     try {
       currentCookie = await getCompleteCookies(userName, userPwd);
-      
-      const cookies = await loadCachedCookies();
-      if (cookies) {
-        await saveCookiesToCache(cookies);
-      }
     } catch (loginError) {
       logger.error(`Login process failed: ${(loginError as Error).message}`);
       return null;
@@ -187,37 +189,41 @@ export async function fetchActivityData(
   }
 
 
-
   logger.debug('Using cached cookie for API request.');
-  
+
   try {
     logger.debug(`Calling getActivityDetailsRaw for activity ${activityId}...`);
-    const rawActivityDetailsString = await getActivityDetailsRaw(activityId, currentCookie);
+    const rawActivityDetailsString = await getActivityDetailsRaw(activityId, currentCookie, 3, 10000, signal);
     logger.debug(`getActivityDetailsRaw returned for activity ${activityId}`);
     if (rawActivityDetailsString) {
       const parsedOuter = JSON.parse(rawActivityDetailsString);
       return JSON.parse(parsedOuter.d);
     }
-    // Check if this was a 5xx error and set flag for cookie validation
     logger.warn(`No data returned from getActivityDetailsRaw for activity ${activityId}, but no authentication error was thrown.`);
     return null;
   } catch (error) {
+    if (signal?.aborted) {
+      logger.debug(`Activity ${activityId} fetch aborted.`);
+      return null;
+    }
     if (error instanceof AuthenticationError) {
-      // Cookie returned 4xx, now validate and re-login
-      logger.warn(`API returned 4xx error (Status: ${error.status}). Cookie may be invalid. Attempting re-login and retry.`);
+      // Throttle: prevent thundering herd from multiple 500 errors
+      if (!tryAcquireAuthLock()) {
+        logger.info(`Auth throttled for activity ${activityId}. Reusing current cookies — likely still valid.`);
+        return null;
+      }
+
+      // Backup cookies before clearing so we can restore on re-login failure
+      backupCookies();
       await clearCookieCache();
 
       try {
         logger.info('Attempting re-login due to authentication failure...');
         currentCookie = await getCompleteCookies(userName, userPwd);
-        
-        const cookies = await loadCachedCookies();
-        if (cookies) {
-          await saveCookiesToCache(cookies);
-        }
+        releaseAuthCooldown();
 
         logger.info('Re-login successful. Retrying request for activity details...');
-        const rawActivityDetailsStringRetry = await getActivityDetailsRaw(activityId, currentCookie);
+        const rawActivityDetailsStringRetry = await getActivityDetailsRaw(activityId, currentCookie, 1, 10000, signal);
         if (rawActivityDetailsStringRetry) {
           const parsedOuterRetry = JSON.parse(rawActivityDetailsStringRetry);
           return JSON.parse(parsedOuterRetry.d);
@@ -225,7 +231,9 @@ export async function fetchActivityData(
         logger.warn(`Still no details for activity ${activityId} after re-login and retry.`);
         return null;
       } catch (retryLoginOrFetchError) {
-        logger.error(`Error during re-login or retry fetch for activity ${activityId}: ${(retryLoginOrFetchError as Error).message}`);
+        logger.error(`Re-login or retry failed for activity ${activityId}: ${(retryLoginOrFetchError as Error).message}`);
+        // Restore old cookies instead of leaving cache empty
+        await restoreCookieBackup();
         return null;
       }
     } else {

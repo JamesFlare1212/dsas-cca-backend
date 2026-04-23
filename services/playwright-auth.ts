@@ -11,6 +11,39 @@ let _inMemoryCookies: Cookie[] | null = null;
 // Login lock to prevent concurrent login attempts
 let _loginLock: Promise<Cookie[]> | null = null;
 
+// Cookie backup: preserved before clearCookieCache, restored on re-login failure
+let _cookieBackup: Cookie[] | null = null;
+
+// Auth failure throttle: debounce consecutive re-login triggers from 500 errors
+// Prevents thundering herd when server is slow and returns many 500s
+let _authFailureCooldownUntil = 0;
+const AUTH_FAILURE_COOLDOWN_MS = 15000; // 15s cooldown between re-login cycles
+
+/**
+ * Put all callers to wait during auth cooldown window.
+ * Returns true if auth is allowed (outside cooldown), false if throttled.
+ */
+export function tryAcquireAuthLock(): boolean {
+  const now = Date.now();
+  if (now < _authFailureCooldownUntil) {
+    const remaining = _authFailureCooldownUntil - now;
+    logger.warn(
+      `Re-login throttled: ${Math.round(remaining / 1000)}s cooldown remaining. ` +
+      `Existing cookies are likely still valid — server 500 is a temporary slowdown.`
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Called after a successful re-login to release the cooldown.
+ */
+export function releaseAuthCooldown(): void {
+  _authFailureCooldownUntil = Date.now() + AUTH_FAILURE_COOLDOWN_MS;
+  logger.info(`Auth cooldown set: ${AUTH_FAILURE_COOLDOWN_MS}ms to prevent thundering herd re-logins.`);
+}
+
 /**
  * Ensure only one login process runs at a time
  */
@@ -179,7 +212,39 @@ export async function saveCookiesToCache(cookies: Cookie[]): Promise<void> {
 }
 
 /**
+ * Backup current cookies before clearing. Restored if re-login fails.
+ */
+export function backupCookies(): Cookie[] | null {
+  if (_inMemoryCookies) {
+    _cookieBackup = [..._inMemoryCookies];
+    logger.info('Cookies backed up before clear.');
+  }
+  return _cookieBackup;
+}
+
+/**
+ * Restore cookies from backup after failed re-login.
+ */
+export async function restoreCookieBackup(): Promise<boolean> {
+  if (_cookieBackup) {
+    _inMemoryCookies = _cookieBackup;
+    try {
+      await fs.promises.writeFile(COOKIE_FILE_PATH, JSON.stringify(_cookieBackup, null, 2), 'utf-8');
+      logger.info('Cookies restored from backup successfully.');
+      _cookieBackup = null;
+      return true;
+    } catch (error: any) {
+      logger.error('Failed to restore cookies from backup:', error.message);
+      return false;
+    }
+  }
+  logger.warn('No cookie backup available for restore.');
+  return false;
+}
+
+/**
  * Clear cookie cache
+ * Prefer backupAndClearCookieCache() instead to preserve old cookies.
  */
 export async function clearCookieCache(): Promise<void> {
   _inMemoryCookies = null;
