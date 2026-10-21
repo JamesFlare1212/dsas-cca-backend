@@ -50,7 +50,6 @@ jobs:
           --health-retries 10
     env:
       RUN_REDIS_TESTS: "1"
-      TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports[6379] }}/0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,6 +59,8 @@ jobs:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
       - run: bun run test:integration
+        env:
+          TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}/0
       - name: Install browser system dependencies
         run: sudo "$(command -v bun)" node_modules/playwright-core/cli.js install-deps chromium
       - run: bun run browser:install
