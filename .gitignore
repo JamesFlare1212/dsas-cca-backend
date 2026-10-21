@@ -1,5 +1,21 @@
-node_modules
-cookies.json
+# Dependencies and generated output; bun.lock is intentionally committed.
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Credentials, cookie caches, and persistent local state.
 .env
-redis_data
-warp
+.env.*
+!.env.example
+data/
+redis_data/
+cookies.json
+services/cookies.json
+.cloakbrowser/
+.cache/
+
+# Local diagnostics and tools.
+*.log
+.DS_Store
+/warp

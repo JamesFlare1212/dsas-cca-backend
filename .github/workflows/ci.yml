@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: test
+  API_BASE_URL: https://engage.invalid
+  API_USERNAME: offline-test
+  API_PASSWORD: offline-test
+  SCHEDULER_ENABLED: "false"
+  CLOAKBROWSER_AUTO_UPDATE: "false"
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - name: Typecheck, lint, and offline unit tests
+        run: bun run check
+
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:8.10.2-alpine3.23@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      RUN_REDIS_TESTS: "1"
+      TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports[6379] }}/0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun run test:integration
+      - name: Install browser system dependencies
+        run: sudo "$(command -v bun)" node_modules/playwright-core/cli.js install-deps chromium
+      - run: bun run browser:install
+      - name: Verify real browser authentication against a local fixture
+        run: bun run test:browser
+
+  container-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate deployment configuration
+        env:
+          REDIS_PASSWORD: ci-compose-validation
+        run: |
+          cp example.env .env
+          trap 'rm -f .env' EXIT
+          sh -n startup.sh
+          docker compose config --quiet
+      - name: Build production image and install verified CloakBrowser
+        run: docker build --pull --tag dsas-cca-backend:ci .
+      - name: Launch the baked browser without network access
+        run: docker run --rm --init --network none dsas-cca-backend:ci bun run browser:smoke
