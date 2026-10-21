@@ -19,3 +19,6 @@ services/cookies.json
 *.log
 .DS_Store
 /warp
+
+# Dedicated registry credentials for optional Watchtower authentication.
+.watchtower-auth/

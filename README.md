@@ -22,7 +22,7 @@ scripts/          浏览器安装/冒烟、手动登录、旧缓存导入
 
 ## 使用 Docker Compose
 
-需要支持 Compose v2 的 Docker。首次配置：
+需要 Docker 25+ 和支持 Compose v2 的 Docker CLI。默认拉取 GitHub Container Registry（GHCR）的预构建镜像，并由 Watchtower 自动更新。首次配置：
 
 ```sh
 cp example.env .env
@@ -35,7 +35,8 @@ cp example.env .env
 
 ```sh
 docker compose config --quiet
-docker compose up --build --detach
+docker compose pull
+docker compose up --detach
 docker compose ps
 curl --fail http://127.0.0.1:3000/health/ready
 docker compose logs --tail=100 app
@@ -43,7 +44,61 @@ docker compose logs --tail=100 app
 
 若修改了宿主机端口，请同步调整上面的请求地址。
 
-镜像通过 `bun install --frozen-lockfile --production` 安装生产依赖，按白名单复制源文件。构建时先执行 `bun node_modules/playwright-core/cli.js install-deps chromium` 安装系统库，再执行 `bun run browser:install` 下载 CloakBrowser。`ensureBinary` 对官方签名校验清单和下载内容进行验证；安装失败直接使构建失败。这里不会安装 Playwright 自带的 Chromium。
+### Watchtower 自动更新
+
+Watchtower 检查的是容器镜像仓库中的标签，不直接拉取 GitHub 源码。更新链路为：GitHub 推送 → CI 测试和容器冒烟通过 → 发布同一份已验证镜像至 GHCR → Watchtower 检测摘要变化并重建 `app`。
+
+默认 `APP_IMAGE=ghcr.io/jamesflare1212/dsas-cca-backend:latest` 跟随仓库默认分支 `master`。当前尚未合并的重写分支使用以下配置，首次启动前将它写入 `.env`：
+
+```dotenv
+APP_IMAGE=ghcr.io/jamesflare1212/dsas-cca-backend:rewrite-bun-cloakbrowser
+WATCHTOWER_POLL_INTERVAL=300
+WATCHTOWER_DOCKER_API_VERSION=1.44
+```
+
+CI 仅对原仓库默认分支与 `rewrite/bun-cloakbrowser` 的推送发布镜像，PR、fork、其他分支和手动运行不发布。每次发布还提供 `sha-<完整提交 SHA>` 标签用于回滚。默认分支发布 `latest`，重写分支仅更新 `rewrite-bun-cloakbrowser`。首次部署应先确认对应 CI 的 `publish` 任务完成，再执行 `docker compose pull`。
+
+Watchtower 使用显式启用标签和 Compose 项目 scope，默认每 300 秒检查一次，只更新本项目的 `app`。Redis 与 Watchtower 自身均排除在自动更新之外。更新时最多等待 25 秒关闭应用，保留已有环境变量、端口与命名卷，并清理旧镜像。它需要挂载宿主机 Docker socket 才能重建容器；没有零停机或自动回滚保证。查看更新日志：
+
+```sh
+docker compose logs --tail=100 watchtower
+```
+
+Watchtower 会复用旧容器配置。修改 `.env` 或 Compose 后，需要手动执行 `docker compose up --detach` 使配置生效。暂停更新可执行 `docker compose stop watchtower`；恢复用 `docker compose up --detach watchtower`。
+
+同一 Docker 主机已有其他 Watchtower 时，也应为其设置独立 scope；全局实例应使用 `--scope none`，以免清理其他 Watchtower 实例。[多实例配置](https://containrrr.dev/watchtower/running-multiple-instances/)说明了自身 scope 标签与全局实例的行为。
+
+回滚时将 `APP_IMAGE` 改为已发布的 `ghcr.io/jamesflare1212/dsas-cca-backend:sha-<完整 SHA>`，再执行 `docker compose pull app` 和 `docker compose up --detach app`。固定 SHA 标签不会跟随新的分支发布。
+
+按要求使用 [containrrr/watchtower](https://github.com/containrrr/watchtower) 的固定版本 `1.7.1` 与镜像摘要；该上游已归档。配置显式使用 Docker API `1.44`，以避免其旧版客户端默认 API 在新 Docker 上被拒绝。若宿主机 API 限制不同，根据 `docker version` 调整 `WATCHTOWER_DOCKER_API_VERSION`。[Watchtower 参数](https://containrrr.dev/watchtower/arguments/)、[Docker API 版本](https://docs.docker.com/reference/api/engine/)说明了这些配置。
+
+### GHCR 访问权限
+
+新建 GHCR 包可能默认为私有，即使源码仓库公开。首次发布后，可以在 [容器包设置](https://github.com/users/JamesFlare1212/packages/container/package/dsas-cca-backend)中将该包设为 Public，供服务器匿名拉取。此代码不会修改包可见性。
+
+保留私有包时，使用具有 `read:packages` 权限的 GitHub 凭据在服务器终端登录，并将同一份独立 Docker 配置挂给 Watchtower：
+
+```sh
+mkdir -p .watchtower-auth
+chmod 700 .watchtower-auth
+docker --config ./.watchtower-auth login ghcr.io --username JamesFlare1212
+docker --config ./.watchtower-auth compose -f docker-compose.yaml -f docker-compose.auth.yaml pull
+docker --config ./.watchtower-auth compose -f docker-compose.yaml -f docker-compose.auth.yaml up --detach
+```
+
+登录命令交互式读取凭据，不要把 token 写入命令行参数、仓库或聊天。独立目录已加入 `.gitignore`，以只读目录挂载方式支持凭据文件更新；其 `config.json` 需要包含 GHCR 的 `auths`，不要依赖 Watchtower 镜像中不存在的宿主机 credential helper。[私有镜像认证](https://containrrr.dev/watchtower/private-registries/)说明了配置读取方式。
+
+### 从源码构建
+
+默认 Compose 不在服务器构建镜像。需要本地源码镜像时，使用独立项目与覆盖文件：
+
+```sh
+docker compose --project-name dsas-cca-local -f docker-compose.yaml -f docker-compose.build.yaml up --build --detach
+```
+
+此模式将 `app` 标记为不自动更新，Watchtower 默认不启动。端口仍由 `PORT` 决定，避免与已有部署占用同一端口。
+
+发布镜像通过 `bun install --frozen-lockfile --production` 安装生产依赖，按白名单复制源文件。构建时先执行 `bun node_modules/playwright-core/cli.js install-deps chromium` 安装系统库，再执行 `bun run browser:install` 下载 CloakBrowser。`ensureBinary` 对官方签名校验清单和下载内容进行验证；安装失败直接使构建失败。这里不会安装 Playwright 自带的 Chromium。
 
 浏览器缓存在 `/opt/cloakbrowser`，归 `bun` 用户所有。镜像与 Compose 均设置 `CLOAKBROWSER_AUTO_UPDATE=false`，通过重新构建和发布镜像更新浏览器。默认免费二进制无需许可证。若另行使用授权版本，可以在运行环境提供 `CLOAKBROWSER_LICENSE_KEY`；相应的授权二进制缓存需另行准备，默认镜像仅预装免费版本。不要把授权密钥放进 Dockerfile 或构建参数。
 
@@ -252,11 +307,11 @@ bun run test:browser
 
 并发合并、出站限速、熔断和 HTTP 限速均以进程为单位；后台任务租约通过 Redis 协调多个进程。出站限速包含请求重试与认证恢复后的重试。多副本部署应按副本数量分配出站预算，并确保账号允许独立会话。
 
-CI 将检查、Redis/真实浏览器集成与容器浏览器冒烟分为三个任务。Redis 服务与 Compose 使用相同固定版本。容器任务构建生产镜像（包括系统依赖和经验证的 CloakBrowser），然后执行：
+CI 包括检查、Redis/真实浏览器集成、容器浏览器冒烟，以及仅在前三项全部通过后执行的 GHCR 发布任务。发布会复用已冒烟验证的镜像，避免发布与验证时使用不同构建。Redis 服务与 Compose 使用相同固定版本。容器任务构建生产镜像（包括系统依赖和经验证的 CloakBrowser），然后执行：
 
 ```sh
 docker build --tag dsas-cca-backend:smoke .
 docker run --rm --init --network none dsas-cca-backend:smoke bun run browser:smoke
 ```
 
-浏览器冒烟在禁用网络的容器中渲染本地页面，不使用真实账户。镜像构建本身需要访问软件包仓库及官方浏览器下载源。GitHub Actions 固定到完整提交 SHA；Dependabot 每周检查 Bun 文本锁文件、Docker、Compose 和 Actions 更新。[GitHub 当前支持 Bun 的 `bun.lock`](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories#bun)。更新 Bun 时同时核对 `packageManager`、Dockerfile 与 CI 中的版本；更新 Redis 时同时核对 Compose 与 CI 服务镜像。
+浏览器冒烟在禁用网络的容器中渲染本地页面，不使用真实账户。CI 还在真实 Docker daemon 上用临时容器验证 Watchtower 的应用更新、标签/scope 隔离，以及环境变量和 init 设置的保留；测试不会启动真实 Engage 采集。镜像构建本身需要访问软件包仓库及官方浏览器下载源。GitHub Actions 固定到完整提交 SHA；Dependabot 每周检查 Bun 文本锁文件、Docker、Compose 和 Actions 更新。[GitHub 当前支持 Bun 的 `bun.lock`](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories#bun)。更新 Bun 时同时核对 `packageManager`、Dockerfile 与 CI 中的版本；更新 Redis 时同时核对 Compose 与 CI 服务镜像。

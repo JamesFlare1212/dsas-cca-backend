@@ -1,8 +1,8 @@
+name: dsas-cca-backend
+
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${APP_IMAGE:-ghcr.io/jamesflare1212/dsas-cca-backend:latest}
     init: true
     ports:
       - "${PORT:-3000}:3000"
@@ -16,6 +16,9 @@ services:
       REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0"
       CLOAKBROWSER_CACHE_DIR: /opt/cloakbrowser
       CLOAKBROWSER_AUTO_UPDATE: "false"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.scope: ${COMPOSE_PROJECT_NAME:-dsas-cca-backend}
     volumes:
       - app-data:/usr/src/app/data
     shm_size: 256mb
@@ -31,11 +34,13 @@ services:
         max-file: "3"
 
   redis:
-    # Verified against redis/redis's stable release and Docker Official Images.
+    # Database upgrades are explicit; Watchtower only updates the app.
     image: redis:8.10.2-alpine3.23@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     user: redis:redis
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
     command:
       - /bin/sh
       - -ec
@@ -52,6 +57,28 @@ services:
       timeout: 5s
       start_period: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "15m"
+        max-file: "3"
+
+  watchtower:
+    image: containrrr/watchtower:1.7.1@sha256:6dd50763bbd632a83cb154d5451700530d1e44200b268a4e9488fefdfcf2b038
+    environment:
+      DOCKER_API_VERSION: ${WATCHTOWER_DOCKER_API_VERSION:-1.44}
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_SCOPE: ${COMPOSE_PROJECT_NAME:-dsas-cca-backend}
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-300}
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+      WATCHTOWER_TIMEOUT: 25s
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+      com.centurylinklabs.watchtower.scope: ${COMPOSE_PROJECT_NAME:-dsas-cca-backend}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
     logging:
       driver: json-file
       options:
