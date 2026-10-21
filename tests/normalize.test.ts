@@ -131,6 +131,77 @@ describe('activity normalization', () => {
     expect(result.poorWeatherPlan).toBe('');
   });
 
+  test('parses Engage null-ID labels, numeric value controls and layout placeholders', () => {
+    // Reduced live-response structure; all activity and directory values are synthetic.
+    const raw = fixture([
+      { fID: null, fData: 'Activity Schedule' },
+      { fID: 'academicyear', fData: '2026/2027' },
+      { fID: 'schedule', fData: 'Monday G7-G9' },
+      { fID: null, fData: 'Day' },
+      { fID: 'day', fData: 'Monday' },
+      { fID: null, fData: 'Staff' },
+      { fID: 'staff', fData: 'S1', lParms: [{ key: 'S1', val: 'Example Teacher' }] },
+      { fID: null, fData: null, fType: 0 },
+      { fID: null, fData: 'Description' },
+      { fID: '1', fData: 'Play chess' },
+      { fID: null, fData: 'Upload Photo' },
+      { fID: '1', fData: 'https://example.org/chess.png' },
+      { fID: null, fData: 'Name To Appear On Reports' },
+      { fID: '1', fData: 'Example Teacher' },
+      { fID: null, fData: 'Is Pre Sign-up' },
+      { fID: '1', fData: '' },
+      { fID: null, fData: 'Student Led' },
+      { fID: '1', fData: 'Yes' },
+      { fID: null, fData: 'Student Leader Name(s)' },
+      { fID: '1', fData: 'Example Leader, Another Leader' },
+      { fID: null, fData: 'Semester Cost' },
+      { fID: '1', fData: 'Free' },
+      { fID: null, fData: 'Poor Weather Plan' },
+      { fID: '1', fData: 'Indoors' },
+      { fID: null, fData: 'Activity Runs From' },
+      { fID: 'runsfrom', fData: '01/09/2026' },
+      { fID: null, fData: 'To' },
+      { fID: 'runsto', fData: '18/12/2026' },
+      { fID: null, fData: 'Recurring Weekly' },
+      { fID: null, fData: null, fType: 0 },
+    ]);
+    const before = JSON.stringify(raw);
+    expect(normalizeActivity(raw, '42')).toMatchObject({
+      name: 'Chess',
+      academicYear: '2026/2027',
+      grades: { min: '7', max: '9' },
+      description: 'Play chess',
+      photo: 'https://example.org/chess.png',
+      meeting: { day: 'Monday' },
+      staff: ['S1'],
+      staffForReports: ['Example Teacher'],
+      isPreSignup: false,
+      isStudentLed: true,
+      studentLeaders: ['Example Leader', 'Another Leader'],
+      semesterCost: 'Free',
+      poorWeatherPlan: 'Indoors',
+      duration: { startDate: '01/09/2026', endDate: '18/12/2026', isRecurringWeekly: true },
+    });
+    expect(normalizeStaff(raw)).toEqual({ S1: 'Example Teacher' });
+    expect(JSON.stringify(raw)).toBe(before);
+  });
+
+  test.each([
+    ['No', false],
+    ['', false],
+    [null, true],
+  ] as const)('preserves Student Led label value %s before name inference', (value, expected) => {
+    expect(
+      activity(
+        [
+          { fID: null, fData: 'Student Led' },
+          { fID: '1', fData: value },
+        ],
+        'Chess (SL)',
+      ).isStudentLed,
+    ).toBe(expected);
+  });
+
   test.each([
     ['SLAM', false],
     ['SLAM Chess', false],
@@ -370,6 +441,7 @@ describe('payload validation', () => {
       { newRows: [{ fields: [null] }] },
       { newRows: [{ fields: [{}] }] },
       { newRows: [{ fields: [{ fID: 1 }] }] },
+      { newRows: [{ fields: [{ fID: null, fData: {} }] }] },
       { newRows: [{ fields: [{ fID: 'activityname', fData: {} }] }] },
       { newRows: [{ fields: [{ fID: 'activityname', fData: 123 }] }] },
       { isError: 'false', newRows: [] },

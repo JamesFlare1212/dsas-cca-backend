@@ -9,13 +9,15 @@ const staffOptionSchema = z
   })
   .readonly();
 
-function fieldKey(id: string): string {
-  return id.replace(/[\s_-]/g, '').toLowerCase();
+function fieldKey(id: string | null): string {
+  return id?.replace(/[\s_-]/g, '').toLowerCase() ?? '';
 }
 
 export const rawActivityFieldSchema = z
   .looseObject({
-    fID: z.string(),
+    // Engage labels and layout placeholders have null IDs; their adjacent values
+    // may use a generic ID, so retain them for label-based normalization.
+    fID: z.string().nullable(),
     fData: z.union([z.string(), z.boolean()]).nullish(),
     // Other controls also carry lParms, with control-specific metadata.
     lParms: z.array(z.unknown()).readonly().nullish(),
@@ -190,6 +192,7 @@ function emptyActivity(id: string): Activity {
 }
 
 function applyField(activity: Activity, field: RawActivityField): boolean {
+  if (field.fID === null) return false;
   const value = field.fData;
   switch (fieldKey(field.fID)) {
     case 'academicyear':
@@ -315,6 +318,14 @@ export function normalizeActivity(raw: RawActivity, requestedId: string): Activi
           break;
         case 'Is Pre Sign-up':
           activity.isPreSignup = booleanValue(next(), 'Is Pre Sign-up');
+          index++;
+          break;
+        case 'Student Led':
+          activity.isStudentLed = booleanValue(next(), 'Student Led');
+          index++;
+          break;
+        case 'Student Leader Name(s)':
+          activity.studentLeaders = stringList(next(), 'Student Leader Name(s)');
           index++;
           break;
         case 'Semester Cost':

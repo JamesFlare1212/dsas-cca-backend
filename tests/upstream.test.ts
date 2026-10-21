@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createLogger } from '../src/core/logger.ts';
+import { normalizeActivity, normalizeStaff } from '../src/domain/normalize.ts';
 import {
   type Authenticator,
   EngageClient,
@@ -92,6 +93,39 @@ describe('EngageClient', () => {
     expect(await fixture([Response.json({ d: activity })]).client.fetchActivity('123')).toEqual(
       activity,
     );
+  });
+
+  test('decodes and normalizes responses containing null-ID layout and label controls', async () => {
+    const inner = {
+      isError: false,
+      PupilIDsLookup: {},
+      newRows: [
+        {
+          rID: '123:3:3:0',
+          fields: [
+            { fID: null, fData: 'Activity Name' },
+            { fID: 'activityname', fData: 'Chess' },
+            { fID: null, fData: 'Description' },
+            { fID: '1', fData: 'Play chess' },
+            { fID: null, fData: null },
+            { fID: 'staff', lParms: [{ key: 'S1', val: 'Example Teacher' }] },
+          ],
+        },
+      ],
+    };
+    for (const response of [activityResponse(inner), Response.json({ d: inner })]) {
+      const { client, refreshes } = fixture([response]);
+      const raw = await client.fetchActivity('123');
+      expect(raw).toEqual(inner);
+      if (!raw) throw new Error('Expected an activity response');
+      expect(normalizeActivity(raw, '123')).toMatchObject({
+        id: '123',
+        name: 'Chess',
+        description: 'Play chess',
+      });
+      expect(normalizeStaff(raw)).toEqual({ S1: 'Example Teacher' });
+      expect(refreshes).toEqual([]);
+    }
   });
 
   test('404 is missing; outages reject and never refresh cookies', async () => {
