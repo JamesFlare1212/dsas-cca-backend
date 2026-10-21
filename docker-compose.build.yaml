@@ -1,0 +1,12 @@
+# Optional source-build deployment. The local app image is excluded from updates.
+services:
+  app:
+    image: dsas-cca-backend:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+  watchtower:
+    profiles: [auto-update]

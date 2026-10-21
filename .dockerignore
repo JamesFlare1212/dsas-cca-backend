@@ -1,0 +1,14 @@
+# Deny the whole checkout, then allow only the runtime/build inputs.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!bun.lock
+!src/
+!src/**
+!scripts/
+!scripts/install-browser.ts
+!scripts/browser-smoke.ts
+!scripts/login.ts
+!scripts/migrate-cache.ts
+!startup.sh

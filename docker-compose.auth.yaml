@@ -1,0 +1,12 @@
+# Optional GHCR authentication for private packages. Login uses a dedicated config.
+services:
+  watchtower:
+    environment:
+      DOCKER_CONFIG: /config
+    volumes:
+      - type: bind
+        source: ${WATCHTOWER_AUTH_DIR:-./.watchtower-auth}
+        target: /config
+        read_only: true
+        bind:
+          create_host_path: false
