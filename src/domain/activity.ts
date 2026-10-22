@@ -27,6 +27,7 @@ export interface Activity {
     isRecurringWeekly: boolean | null;
   };
   grades: {
+    /** Numeric strings: KG1=-2, KG2=-1, KG3=0; G1 through G12 keep their numbers. */
     min: string | null;
     max: string | null;
   };

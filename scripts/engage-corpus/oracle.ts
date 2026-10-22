@@ -1,7 +1,7 @@
 // A source-control reference, deliberately independent of normalize.ts and its rules.
 // It reads named controls and row captions, not parser output or parser snapshots.
 import type { Activity, ActivityMeeting } from '../../src/domain/activity.ts';
-import type { Expected, HttpInput, SourceBody, SourceField } from './model.ts';
+import type { Expected, HttpInput, SourceBody, SourceField, SourceRow } from './model.ts';
 
 export const excludedStaff = new Set([
   'CL1-827',
@@ -28,6 +28,75 @@ export const captions: Record<string, string> = {
   'Semester Cost': 'semesterCost',
   'Poor Weather Plan': 'poorWeatherPlan',
 };
+const reviewedControls = new Set([
+  'academicyear',
+  'schedule',
+  'yeargroup',
+  'category',
+  'activityname',
+  'description',
+  'descriptionzh',
+  'photo',
+  'day',
+  'start',
+  'end',
+  'site',
+  'block',
+  'room',
+  'staff',
+  'registerlink',
+  'linkedperiod',
+  'runsfrom',
+  'runsto',
+  'materials',
+  'requirements',
+  ...Object.values(captions).map((value) => value.toLowerCase()),
+  'close',
+  'previewactivity',
+]);
+// These are the business templates observed in the private captures and checked
+// against Engage's template type definitions. New/renamed templates need review.
+const reviewedTemplates: Record<string, readonly string[]> = {
+  '0': ['Activity Schedule'],
+  '2': ['Activity Category'],
+  '3': ['Activity Name'],
+  '4': [], // The portal numbers repeated "Activity Place And Time" row captions.
+  '5': ['Name To Appear On Reports'],
+  '11': ['Description'],
+  '12': ['Activity Runs From'],
+  '14': ['Upload Photo'],
+  '15': ['Is Pre Sign-up'],
+  '17': ['Chinese Description', 'Student Leader Name(s)', 'Semester Cost', 'Poor Weather Plan'],
+  '20': ['Student Led'],
+};
+function requireReviewedControls(source: SourceBody): void {
+  for (const row of source.newRows) {
+    if ('isDeleted' in row && row.isDeleted === true)
+      throw new Error('Unreviewed deleted source row');
+    const parts = row.rID.split(':');
+    const type = parts.length >= 4 ? parts[2] : undefined;
+    const caption = sourceCaption(row);
+    if (type !== undefined) {
+      const titles = Object.hasOwn(reviewedTemplates, type) ? reviewedTemplates[type] : undefined;
+      if (
+        !titles ||
+        (type === '4'
+          ? !/^Activity Place And Time \d+$/.test(caption ?? '')
+          : !titles.includes(caption ?? ''))
+      )
+        throw new Error(`Unreviewed business template type ${type} or caption`);
+    }
+    for (const field of row.fields) {
+      if (!field.fID || field.fData == null || field.fData === '') continue;
+      if (field.fID === '1') {
+        if (!caption || !Object.hasOwn(captions, caption))
+          throw new Error('Unreviewed generic business value control');
+      } else if (!reviewedControls.has(field.fID.toLowerCase())) {
+        throw new Error('Unreviewed named business control');
+      }
+    }
+  }
+}
 export function decodeSource(input: HttpInput): SourceBody {
   const envelope: unknown = JSON.parse(input.body);
   if (!envelope || typeof envelope !== 'object' || !('d' in envelope))
@@ -49,6 +118,10 @@ export function sourceText(field?: SourceField): string | null {
   if (field?.fData == null) return null;
   if (typeof field.fData !== 'string') throw new Error('Text control contains non-text');
   return field.fData;
+}
+export function sourceCaption(row: SourceRow): string | null {
+  const field = row.fields[0];
+  return field?.fID === null ? sourceText(field) : null;
 }
 export const sourceList = (value: string | null): string[] =>
   (value ?? '')
@@ -98,6 +171,7 @@ export function referenceGrades(value: string | null): Activity['grades'] {
     const first = Number(token[2]),
       last = Number(range?.[2] ?? token[2]);
     if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last) || first > last) return unknown;
+    if (current === 'KG' && (first < 1 || last > 3)) return unknown;
     consumedThrough = tailStart + (range?.[0].length ?? 0);
     const rest = value.slice(consumedThrough);
     if (/^\s*[-–—−~～至]/.test(rest)) {
@@ -105,7 +179,7 @@ export function referenceGrades(value: string | null): Activity['grades'] {
       if (!range || !label || /^(?:KG|G|Grades?|Years?)$/i.test(label[1] ?? '')) return unknown;
     }
     if (/^\.\d/.test(rest)) return unknown;
-    numbers.push(first, last);
+    numbers.push(current === 'KG' ? first - 3 : first, current === 'KG' ? last - 3 : last);
   }
   return { min: String(Math.min(...numbers)), max: String(Math.max(...numbers)) };
 }
@@ -141,7 +215,7 @@ export function deriveExpected(input: HttpInput): Expected {
   for (const row of source.newRows) {
     if (row.rID.split(':')[0] !== String(input.id)) throw new Error('Source row ID mismatch');
     for (const field of row.fields) if (field.fID) named.set(field.fID.toLowerCase(), field);
-    const caption = sourceText(row.fields[0]);
+    const caption = sourceCaption(row);
     const target = caption && Object.hasOwn(captions, caption) ? captions[caption] : undefined;
     if (target) {
       const value = row.fields[1];
@@ -152,6 +226,7 @@ export function deriveExpected(input: HttpInput): Expected {
   const name = sourceText(named.get('activityname'));
   if (input.id === 0 && !name?.trim()) return { kind: 'empty-form' };
   if (!name?.trim()) throw new Error('Unreviewed nameless activity');
+  requireReviewedControls(source);
   const field = (key: string) => byCaption.get(key) ?? named.get(key.toLowerCase());
   const text = (key: string) => sourceText(field(key));
   const meetings: ActivityMeeting[] = [];

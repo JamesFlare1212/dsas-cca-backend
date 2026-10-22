@@ -264,13 +264,16 @@ function parseGrades(schedule: string | null): Activity['grades'] {
     const min = Number(first);
     const max = Number(match[4] ?? first);
     if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min > max) return absent;
+    if (currentFamily === 'KG' && (min < 1 || max > 3)) return absent;
     const remainder = schedule.slice(match.index + match[0].length);
     // Complete ranges may be followed by labels such as "KG2-KG3 - Internal".
     const hasLabelSuffix =
       match[4] !== undefined && /^\s+[-–—]\s+(?!(?:KG|G|Grades?|Years?)\b)\p{L}/iu.test(remainder);
     // Do not silently interpret a broken range (G1-, G1-G) as a single grade.
     if (!hasLabelSuffix && /^(?:\s*[-–—−~～至]|\.\d)/.test(remainder)) return absent;
-    grades.push(min, max);
+    // Keep kindergarten below G1 on the same scale: KG1=-2, KG2=-1, KG3=0.
+    const offset = currentFamily === 'KG' ? 3 : 0;
+    grades.push(min - offset, max - offset);
   }
   return grades.length
     ? { min: String(Math.min(...grades)), max: String(Math.max(...grades)) }

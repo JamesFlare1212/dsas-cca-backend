@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
-import { loadCorpus } from '../scripts/engage-corpus/io.ts';
+import { sourceFeatures } from '../scripts/engage-corpus/features.ts';
+import { hash, loadCorpus } from '../scripts/engage-corpus/io.ts';
 import { verifyCase } from '../scripts/engage-corpus/verify.ts';
 
 const directory = fileURLToPath(new URL('./fixtures/engage-corpus', import.meta.url));
@@ -12,6 +13,18 @@ const selected = cases.filter(
   (entry) => partition === 'all' || entry.input.partition === partition,
 );
 
+test('frozen expectations identify the current independent oracle and reviewed aliases', async () => {
+  for (const [file, expected] of [
+    ['oracle.ts', manifest.oracleSha256],
+    ['reviewed-staff-aliases.ts', manifest.reviewedAliasesSha256],
+  ] as const) {
+    const bytes = await Bun.file(
+      new URL(`../scripts/engage-corpus/${file}`, import.meta.url),
+    ).bytes();
+    expect(hash(bytes)).toBe(expected);
+  }
+});
+
 test('the frozen corpus covers every ID and keeps activity groups within one partition', () => {
   expect(cases).toHaveLength(11001);
   expect(selected.length).toBeGreaterThan(0);
@@ -19,6 +32,9 @@ test('the frozen corpus covers every ID and keeps activity groups within one par
     partitions: Record<string, number> = {};
   const coverage: Record<string, Record<string, number>> = { regression: {}, validation: {} };
   for (const entry of cases) {
+    expect(entry.input.features).toEqual(
+      sourceFeatures(entry.input.response, entry.golden.expected),
+    );
     const kind = entry.golden.expected.kind;
     counts[kind] = (counts[kind] ?? 0) + 1;
     partitions[entry.input.partition] = (partitions[entry.input.partition] ?? 0) + 1;

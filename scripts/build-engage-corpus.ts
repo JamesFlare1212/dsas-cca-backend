@@ -3,10 +3,11 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { brotliCompressSync, constants } from 'node:zlib';
 import sharp from 'sharp';
+import { sourceFeatures } from './engage-corpus/features.ts';
 import { hash, readCapture } from './engage-corpus/io.ts';
 import type { CorpusManifest, Expected, GoldenCase, InputCase } from './engage-corpus/model.ts';
 import { decodeSource, deriveExpected } from './engage-corpus/oracle.ts';
-import { Sanitizer } from './engage-corpus/sanitize.ts';
+import { assertReferencesPreserved, Sanitizer } from './engage-corpus/sanitize.ts';
 import { verifyCase } from './engage-corpus/verify.ts';
 
 const rawDirectory = resolve(process.env.RAW_CORPUS_DIR ?? 'data/engage-corpus/raw');
@@ -43,20 +44,6 @@ const counts: Record<string, number> = {},
   partitions: Record<string, number> = {};
 const coverage: Record<string, Record<string, number>> = { regression: {}, validation: {} };
 
-function traits(expected: Expected): string[] {
-  const result: string[] = [expected.kind];
-  if (expected.kind === 'activity') {
-    const a = expected.activity;
-    result.push(`year:${a.academicYear}`);
-    if (a.meetings.length > 1) result.push('multiple-meetings');
-    if (a.descriptionZh) result.push('bilingual');
-    if (a.isPreSignup) result.push('pre-signup');
-    if (a.isStudentLed) result.push('student-led');
-    if (/^\d+$/.test(a.schedule ?? '')) result.push('orphan-schedule');
-    if (/KG\d/i.test(a.schedule ?? '')) result.push('kindergarten');
-  }
-  return result;
-}
 function invariants(expected: Expected) {
   if (expected.kind !== 'activity') return { kind: expected.kind };
   const a = expected.activity;
@@ -74,6 +61,7 @@ function invariants(expected: Expected) {
       day: slot.day,
       start: slot.startTime,
       end: slot.endTime,
+      location: slot.location,
       staff: slot.staff.length,
     })),
     staff: a.staff.length,
@@ -99,7 +87,7 @@ for (let id = 0; id <= 11000; id++) {
       throw new Error('Raw index mismatch');
     const expected = deriveExpected(input);
     sanitizer.observe(decodeSource(input));
-    const features = traits(expected);
+    const features = sourceFeatures(input, expected);
     metadata.push({
       id,
       group: sanitizer.group(input),
@@ -150,7 +138,10 @@ for (const item of metadata) {
     await verifyCase(input, sourceExpected, false);
     const clean = sanitizer.clean(input);
     sanitizer.assertPrivateDataRemoved(clean);
+    assertReferencesPreserved(input, clean);
     const expected = deriveExpected(clean);
+    if (JSON.stringify(item.features) !== JSON.stringify(sourceFeatures(clean, expected)))
+      throw new Error('Cleaning changed source feature classification');
     if (JSON.stringify(invariants(sourceExpected)) !== JSON.stringify(invariants(expected)))
       throw new Error('Cleaning changed semantic invariants');
     await verifyCase(clean, expected);

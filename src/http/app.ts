@@ -18,7 +18,7 @@ const filtersSchema = z.object({
     .optional(),
   grade: z
     .string()
-    .regex(/^(?:[1-9]|1[0-2])$/)
+    .regex(/^(?:-[12]|0|[1-9]|1[0-2])$/)
     .transform(Number)
     .optional(),
   isStudentLed: z

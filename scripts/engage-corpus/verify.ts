@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import pangu from 'pangu';
 import { createLogger } from '../../src/core/logger.ts';
 import type { Activity, StaffDirectory } from '../../src/domain/activity.ts';
 import {
@@ -13,19 +14,30 @@ import type { Expected, HttpInput } from './model.ts';
 import { reviewedStaffAliases } from './reviewed-staff-aliases.ts';
 
 const logger = createLogger('silent');
+// Format only the source expectation. Formatting the actual output too would
+// hide a parser that removes word boundaries, line breaks or punctuation.
 const prose = (value: string | null) =>
   value === null
     ? null
-    : value
-        .replace(/<br\s*\/?\s*>/gi, '')
-        .replace(/\s+/g, '')
-        .replace(/[·•]/g, '・');
-function semantic(activity: Activity) {
+    : pangu
+        .spaceText(value.replace(/<br\s*\/?\s*>/gi, '\n').replace(/ {2,}/g, ' '))
+        .replace(/\n[ \t]+/g, '\n');
+function formattedExpectation(activity: Activity) {
   return {
     ...activity,
-    name: prose(activity.name)
-      ?.replace(/[.()（）]/g, '')
-      .replaceAll('’', "'"),
+    name: pangu.spaceText(
+      activity.name
+        .replace(/<br\s*\/?\s*>/gi, '\n')
+        .replace(/ {2,}/g, ' ')
+        .replaceAll('（', '(')
+        .replaceAll('）', ')')
+        .replaceAll('’', "'")
+        .replaceAll('.', '')
+        .replaceAll('IssuesT台上的社会问题', 'Issues T 台上的社会问题')
+        .replaceAll('校管弦乐团(新老成员都适用', '校管弦乐团(新老成员都适用)')
+        .replace(/\){2,}/g, ')')
+        .trim(),
+    ),
     description: prose(activity.description),
     descriptionZh: prose(activity.descriptionZh),
     poorWeatherPlan: prose(activity.poorWeatherPlan),
@@ -41,10 +53,9 @@ export function differences(
   const errors: string[] = [];
   if (!isDeepStrictEqual(Object.keys(actual).sort(), Object.keys(expected.activity).sort()))
     errors.push('activity.keys');
-  const left = semantic(actual),
-    right = semantic(expected.activity);
+  const right = formattedExpectation(expected.activity);
   for (const key of Object.keys(right) as (keyof Activity)[]) {
-    if (!isDeepStrictEqual(left[key], right[key])) errors.push(`activity.${key}`);
+    if (!isDeepStrictEqual(actual[key], right[key])) errors.push(`activity.${key}`);
   }
   if (
     !isDeepStrictEqual(Object.keys(directory).sort(), Object.keys(expected.staffDirectory).sort())

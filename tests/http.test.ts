@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { AppError, UpstreamError } from '../src/core/errors.ts';
 import { Metrics } from '../src/core/metrics.ts';
 import type { Activity } from '../src/domain/activity.ts';
+import { normalizeActivity } from '../src/domain/normalize.ts';
 import { type AppDependencies, createApp } from '../src/http/app.ts';
 import { activity, MemoryRepository, silentLogger } from './helpers.ts';
 
@@ -115,6 +116,47 @@ describe('HTTP API compatibility and validation', () => {
     }
   });
 
+  test('kindergarten parsing and filtering use -2 through 0 without matching primary grades', async () => {
+    const { app, repository } = fixture();
+    for (const [id, schedule] of [
+      ['60', 'KG1'],
+      ['61', 'KG2'],
+      ['62', 'KG3'],
+      ['63', 'KG1-KG3'],
+      ['64', 'G1'],
+    ]) {
+      if (!id || !schedule) throw new Error('Missing fixture');
+      const value = normalizeActivity(
+        {
+          newRows: [
+            {
+              rID: `${id}:1`,
+              fields: [
+                { fID: 'activityname', fData: 'Test Club' },
+                { fID: 'schedule', fData: schedule },
+              ],
+            },
+          ],
+        },
+        id,
+      );
+      await repository.saveActivity(id, { value, fetchedAt }, 60000);
+    }
+    for (const [grade, ids] of [
+      ['-2', ['60', '63']],
+      ['-1', ['61', '63']],
+      ['0', ['62', '63']],
+      ['1', ['64']],
+      ['2', []],
+      ['3', []],
+    ] as const) {
+      const response = await app.request(`/v1/activity/list?grade=${grade}`);
+      expect(response.status).toBe(200);
+      expect(Object.keys(await response.json())).toEqual([...ids]);
+      expect(response.headers.get('X-Total-Count')).toBe(String(ids.length));
+    }
+  });
+
   test('pagination follows filtering, accepts limit 500, and keeps the full result count', async () => {
     const { app, repository } = fixture();
     seed(repository);
@@ -147,7 +189,10 @@ describe('HTTP API compatibility and validation', () => {
     repository.failure = new AppError('STORAGE_UNAVAILABLE', 'Redis is unavailable.');
     for (const query of [
       'grade=1abc',
-      'grade=0',
+      'grade=-3',
+      'grade=-0',
+      'grade=-01',
+      'grade=-1.0',
       'grade=13',
       'grade=01',
       'grade=1.0',

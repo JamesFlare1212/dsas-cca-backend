@@ -350,6 +350,11 @@ describe('grade schedules', () => {
         .grades,
     ).toEqual({ min: '10', max: '11' });
     expect(activity([{ fID: 'yeargroup', fData: 'G3-G5' }]).grades).toEqual({ min: '3', max: '5' });
+    expect(activity([{ fID: 'yeargroup', fData: 'KG1-KG2' }]).grades).toEqual({
+      min: '-2',
+      max: '-1',
+    });
+    expect(activity([], 'Art Club (KG3)').grades).toEqual({ min: '0', max: '0' });
     expect(activity([{ fID: 'schedule', fData: 'G5-1' }], 'Chess (G1-3)').grades).toEqual({
       min: null,
       max: null,
@@ -361,18 +366,21 @@ describe('grade schedules', () => {
   test.each([
     ['G1-5', '1', '5'],
     ['G1-G5', '1', '5'],
-    ['KG1-KG3', '1', '3'],
-    ['KG1-3', '1', '3'],
+    ['KG1-KG3', '-2', '0'],
+    ['KG1-3', '-2', '0'],
+    ['KG1', '-2', '-2'],
+    ['KG1-KG2', '-2', '-1'],
+    ['KG3', '0', '0'],
     ['Monday G10 – G12', '10', '12'],
     ['Grades 2 — 6', '2', '6'],
     ['Year 3 to be confirmed', '3', '3'],
     ['g01-03', '1', '3'],
     ['G7', '7', '7'],
-    ['KG2', '2', '2'],
+    ['KG2', '-1', '-1'],
     ['G1, G3, G5', '1', '5'],
     ['G1-G3 & G7-G9', '1', '9'],
     ['年级G2至G4', '2', '4'],
-    ['2022.23 CCA S2 - KG2-KG3 - Internal', '2', '3'],
+    ['2022.23 CCA S2 - KG2-KG3 - Internal', '-1', '0'],
     ['G1-G5 - External', '1', '5'],
   ])('parses %s', (schedule, min, max) => {
     expect(activity([{ fID: 'schedule', fData: schedule }]).grades).toEqual({ min, max });
@@ -387,6 +395,10 @@ describe('grade schedules', () => {
     'G1-G',
     'KG2-KG3 -',
     'KG2-KG3 - KG',
+    'KG0',
+    'KG4',
+    'KG1-KG4',
+    'KG3-KG1',
     'KG3-G2',
     'G1 and KG2',
     'Gx-5',

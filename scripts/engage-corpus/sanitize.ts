@@ -1,6 +1,14 @@
 import { createHmac } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { HttpInput, SourceBody, SourceField } from './model.ts';
-import { captions, decodeSource, excludedStaff, sourceList, sourceText } from './oracle.ts';
+import {
+  captions,
+  decodeSource,
+  excludedStaff,
+  sourceCaption,
+  sourceList,
+  sourceText,
+} from './oracle.ts';
 
 const gradeTokens =
   /(?<![A-Za-z0-9])(?:KG|G|Grades?|Years?)\s*\d+(?:\s*[-–—−~～至]\s*(?:(?:KG|G|Grades?|Years?)\s*)?\d*)?/gi;
@@ -19,6 +27,37 @@ const genericNames = new Set([
 ]);
 const isAscii = (value: string) =>
   [...value].every((character) => (character.codePointAt(0) ?? 0) < 128);
+
+const referenceControls = new Set([
+  'academicyear',
+  'schedule',
+  'category',
+  'yeargroup',
+  'day',
+  'start',
+  'end',
+  'site',
+  'block',
+  'room',
+  'runsfrom',
+  'runsto',
+  'linkedperiod',
+]);
+export function assertReferencesPreserved(original: HttpInput, cleaned: HttpInput): void {
+  const references = (input: HttpInput) =>
+    decodeSource(input).newRows.map((row) => ({
+      rowId: row.rID,
+      fields: row.fields
+        .filter((field) => referenceControls.has(field.fID?.toLowerCase() ?? ''))
+        .map((field) => ({
+          id: field.fID,
+          value: field.fData,
+          options: field.lParms?.map((option) => ({ key: option.key, val: option.val })),
+        })),
+    }));
+  if (!isDeepStrictEqual(references(original), references(cleaned)))
+    throw new Error('Cleaning changed source references or location/time values');
+}
 
 export class Sanitizer {
   private readonly people = new Map<string, string>();
@@ -42,7 +81,7 @@ export class Sanitizer {
   }
   observe(source: SourceBody) {
     for (const row of source.newRows) {
-      const first = sourceText(row.fields[0]);
+      const first = sourceCaption(row);
       if (first === 'Student Leader Name(s)') this.addPerson(sourceText(row.fields[1]), 'Student');
       if (first === 'Name To Appear On Reports')
         this.addPerson(sourceText(row.fields[1]), 'Teacher');
@@ -128,7 +167,7 @@ export class Sanitizer {
     const rows = source.newRows.map((row) => ({
       rID: row.rID,
       fields: row.fields.map((field, index): SourceField => {
-        const caption = sourceText(row.fields[0]);
+        const caption = sourceCaption(row);
         const role =
           index === 1 && caption && Object.hasOwn(captions, caption)
             ? captions[caption]
@@ -156,24 +195,7 @@ export class Sanitizer {
                 : 'https://images.example.test/fixture.png'
               : value;
           else if (isCaption || id === 'error') value = this.text(value);
-          else if (
-            [
-              'academicyear',
-              'schedule',
-              'category',
-              'yeargroup',
-              'day',
-              'start',
-              'end',
-              'site',
-              'block',
-              'room',
-              'runsfrom',
-              'runsto',
-              '1',
-            ].includes(id ?? '')
-          )
-            value = this.text(value);
+          else if (referenceControls.has(id ?? '') || id === '1') value = this.text(value);
           else value = value ? 'Fixture control' : value;
         }
         const clean: SourceField = { fID: field.fID, fData: value };
