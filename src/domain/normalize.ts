@@ -1,6 +1,6 @@
 import pangu from 'pangu';
 import { z } from 'zod';
-import type { Activity, StaffDirectory } from './activity';
+import type { Activity, Meeting, StaffDirectory } from './activity';
 
 const staffOptionSchema = z
   .looseObject({
@@ -10,7 +10,82 @@ const staffOptionSchema = z
   .readonly();
 
 function fieldKey(id: string | null): string {
-  return id?.replace(/[\s_-]/g, '').toLowerCase() ?? '';
+  return (
+    id
+      ?.normalize('NFKC')
+      .replace(/[\s_:-]/g, '')
+      .toLowerCase() ?? ''
+  );
+}
+
+// Labels identify generic value controls; named data fields remain authoritative.
+const labelTargets = new Map(
+  Object.entries({
+    'Academic Year': 'academicyear',
+    'Activity Schedule': 'schedule',
+    'Activity Category': 'category',
+    'Activity Name': 'activityname',
+    Description: 'description',
+    'Chinese Description': 'descriptionzh',
+    'Name To Appear On Reports': 'staffforreports',
+    'Upload Photo': 'photo',
+    'Poor Weather Plan': 'poorweatherplan',
+    'Is Pre Sign-up': 'ispresignup',
+    'Student Led': 'isstudentled',
+    'Student Leader Name(s)': 'studentleaders',
+    'Semester Cost': 'semestercost',
+    'Activity Runs From': 'runsfrom',
+    'Activity Runs To': 'runsto',
+    Materials: 'materials',
+    Requirements: 'requirements',
+    中文描述: 'descriptionzh',
+    活动名称: 'activityname',
+    活动描述: 'description',
+    学生主导: 'isstudentled',
+    学生负责人: 'studentleaders',
+  }).map(([label, target]) => [fieldKey(label), target]),
+);
+const genericValueIds = new Set(['1', 'value', 'checkbox', 'textarea', 'text', 'input']);
+const meetingFieldIds = new Set(['day', 'start', 'end', 'site', 'block', 'room']);
+const fieldAliases: Readonly<Record<string, string>> = {
+  name: 'activityname',
+  chinesedescription: 'descriptionzh',
+  presignup: 'ispresignup',
+  studentled: 'isstudentled',
+};
+const namedFieldIds = new Set([
+  ...labelTargets.values(),
+  ...meetingFieldIds,
+  ...Object.keys(fieldAliases),
+  'staff',
+  'isrecurringweekly',
+  'recurringweekly',
+  'recurrence',
+  'frequency',
+  'grade',
+  'grades',
+  'yeargroup',
+  'yeargroups',
+]);
+
+function isLabel(field: RawActivityField, target: string, following?: RawActivityField): boolean {
+  const id = fieldKey(field.fID);
+  if (namedFieldIds.has(id) && (fieldAliases[id] ?? id) !== target) return false;
+  return (
+    field.fID === null ||
+    id === 'label' ||
+    id === 'title' ||
+    [4, 5, 6].includes(Number(field.fType)) ||
+    (id === target && following !== undefined && genericValueIds.has(fieldKey(following.fID)))
+  );
+}
+
+function isLabelValue(field: RawActivityField, target: string): boolean {
+  return (
+    fieldKey(field.fID) === target ||
+    genericValueIds.has(fieldKey(field.fID)) ||
+    (field.fID === null && ![2, 4, 5, 6].includes(Number(field.fType)))
+  );
 }
 
 export const rawActivityFieldSchema = z
@@ -90,6 +165,31 @@ function text(value: RawActivityField['fData'], field: string): string | null {
   return value;
 }
 
+function selectText(field: RawActivityField): string | null {
+  const value = text(field.fData, field.fID ?? 'selection');
+  if (value === null || value === '') return value;
+  // Prefer display values, including numeric room names, over ambiguous keys.
+  if (
+    field.lParms?.some(
+      (item) => typeof item === 'object' && item !== null && 'val' in item && item.val === value,
+    )
+  )
+    return value;
+  const option = field.lParms?.find(
+    (item) => typeof item === 'object' && item !== null && 'key' in item && item.key === value,
+  );
+  if (typeof option === 'object' && option !== null && 'val' in option) {
+    if (typeof option.val === 'string' && option.val.trim()) {
+      // Engage's day options refer to localization resources rather than display text.
+      return option.val.replace(
+        /^dw(?=(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$)/,
+        '',
+      );
+    }
+  }
+  return value;
+}
+
 function cleanText(value: string): string {
   return value.replace(/<br\s*\/?\s*>/gi, '\n').replace(/ {2,}/g, ' ');
 }
@@ -127,10 +227,22 @@ function booleanValue(
   if (value == null) return null;
   if (typeof value === 'boolean') return value;
   const normalized = value.trim().toLowerCase();
-  if (['true', 'yes', 'y', '1', 'on', 'checked', '✓', '✔'].includes(normalized)) return true;
+  // Engage's own activity UI renders fType 18 as checked when fData is "x".
+  if (['true', 'yes', 'y', '1', 'on', 'checked', 'x', '✓', '✔'].includes(normalized)) return true;
   if (['false', 'no', 'n', '0', 'off', 'unchecked', ''].includes(normalized)) return false;
   if (frequency) return normalized === 'recurring weekly' || normalized === 'weekly';
   throw new ActivityNormalizationError(`Invalid boolean for ${field}`);
+}
+
+function booleanControlValue(
+  field: RawActivityField,
+  name: string,
+  frequency = false,
+): boolean | null {
+  // In Engage's fType 18 controls, null is an unchecked box rather than an
+  // unspecified value. Keep legacy inference for payloads without that metadata.
+  if (field.fType === 18 && field.fData == null) return false;
+  return booleanValue(field.fData, name, frequency);
 }
 
 function parseGrades(schedule: string | null): Activity['grades'] {
@@ -152,14 +264,26 @@ function parseGrades(schedule: string | null): Activity['grades'] {
     const min = Number(first);
     const max = Number(match[4] ?? first);
     if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min > max) return absent;
+    const remainder = schedule.slice(match.index + match[0].length);
+    // Complete ranges may be followed by labels such as "KG2-KG3 - Internal".
+    const hasLabelSuffix =
+      match[4] !== undefined && /^\s+[-–—]\s+(?!(?:KG|G|Grades?|Years?)\b)\p{L}/iu.test(remainder);
     // Do not silently interpret a broken range (G1-, G1-G) as a single grade.
-    if (/^(?:\s*[-–—−~～至]|\.\d)/.test(schedule.slice(match.index + match[0].length)))
-      return absent;
+    if (!hasLabelSuffix && /^(?:\s*[-–—−~～至]|\.\d)/.test(remainder)) return absent;
     grades.push(min, max);
   }
   return grades.length
     ? { min: String(Math.min(...grades)), max: String(Math.max(...grades)) }
     : absent;
+}
+
+function emptyMeeting(): Meeting {
+  return {
+    day: null,
+    startTime: null,
+    endTime: null,
+    location: { block: null, room: null, site: null },
+  };
 }
 
 function emptyActivity(id: string): Activity {
@@ -169,18 +293,15 @@ function emptyActivity(id: string): Activity {
     academicYear: null,
     category: null,
     description: '',
+    descriptionZh: null,
     photo: null,
     duration: { startDate: null, endDate: null, isRecurringWeekly: null },
     grades: { min: null, max: null },
     isPreSignup: null,
     isStudentLed: null,
     materials: [],
-    meeting: {
-      day: null,
-      startTime: null,
-      endTime: null,
-      location: { block: null, room: null, site: null },
-    },
+    meeting: emptyMeeting(),
+    meetings: [],
     poorWeatherPlan: '',
     schedule: null,
     semesterCost: '',
@@ -191,18 +312,18 @@ function emptyActivity(id: string): Activity {
   };
 }
 
-function applyField(activity: Activity, field: RawActivityField): boolean {
+function applyField(activity: Activity, field: RawActivityField, meetingStaff: string[]): boolean {
   if (field.fID === null) return false;
   const value = field.fData;
   switch (fieldKey(field.fID)) {
     case 'academicyear':
-      activity.academicYear = text(value, field.fID);
+      activity.academicYear = selectText(field);
       break;
     case 'schedule':
-      activity.schedule = text(value, field.fID);
+      activity.schedule = selectText(field);
       break;
     case 'category':
-      activity.category = text(value, field.fID);
+      activity.category = selectText(field);
       break;
     case 'activityname':
     case 'name':
@@ -211,11 +332,15 @@ function applyField(activity: Activity, field: RawActivityField): boolean {
     case 'description':
       activity.description = text(value, field.fID);
       break;
+    case 'descriptionzh':
+    case 'chinesedescription':
+      activity.descriptionZh = text(value, field.fID);
+      break;
     case 'photo':
       activity.photo = text(value, field.fID);
       break;
     case 'day':
-      activity.meeting.day = text(value, field.fID);
+      activity.meeting.day = selectText(field);
       break;
     case 'start':
       activity.meeting.startTime = text(value, field.fID);
@@ -224,16 +349,17 @@ function applyField(activity: Activity, field: RawActivityField): boolean {
       activity.meeting.endTime = text(value, field.fID);
       break;
     case 'site':
-      activity.meeting.location.site = text(value, field.fID);
+      activity.meeting.location.site = selectText(field);
       break;
     case 'block':
-      activity.meeting.location.block = text(value, field.fID);
+      activity.meeting.location.block = selectText(field);
       break;
     case 'room':
-      activity.meeting.location.room = text(value, field.fID);
+      activity.meeting.location.room = selectText(field);
       break;
     case 'staff':
-      activity.staff = stringList(value, field.fID);
+      meetingStaff.push(...stringList(value, field.fID));
+      activity.staff = [...new Set([...activity.staff, ...meetingStaff])];
       break;
     case 'staffforreports':
       activity.staffForReports = stringList(value, field.fID);
@@ -257,15 +383,15 @@ function applyField(activity: Activity, field: RawActivityField): boolean {
     case 'recurringweekly':
     case 'recurrence':
     case 'frequency':
-      activity.duration.isRecurringWeekly = booleanValue(value, field.fID, true);
+      activity.duration.isRecurringWeekly = booleanControlValue(field, field.fID, true);
       break;
     case 'ispresignup':
     case 'presignup':
-      activity.isPreSignup = booleanValue(value, field.fID);
+      activity.isPreSignup = booleanControlValue(field, field.fID);
       break;
     case 'isstudentled':
     case 'studentled':
-      activity.isStudentLed = booleanValue(value, field.fID);
+      activity.isStudentLed = booleanControlValue(field, field.fID);
       break;
     case 'poorweatherplan':
       activity.poorWeatherPlan = text(value, field.fID);
@@ -288,70 +414,60 @@ export function normalizeActivity(raw: RawActivity, requestedId: string): Activi
     throw new ActivityNormalizationError(`Activity response ID does not match requested ID ${id}`);
   }
   const activity = emptyActivity(id);
+  let legacyMeeting = activity.meeting;
+  const gradeHints: string[] = [];
   for (const row of rows) {
+    activity.meeting = emptyMeeting();
+    const meetingStaff: string[] = [];
+    let hasMeeting = false;
+    const apply = (field: RawActivityField): boolean => {
+      const key = fieldKey(field.fID);
+      if (meetingFieldIds.has(key)) hasMeeting = true;
+      if (['grade', 'grades', 'yeargroup', 'yeargroups'].includes(key)) {
+        const hint = selectText(field);
+        if (hint) gradeHints.push(hint);
+      }
+      return applyField(activity, field, meetingStaff);
+    };
     for (let index = 0; index < row.fields.length; index++) {
       const field = row.fields[index];
       if (!field) continue;
-      const next = (): RawActivityField['fData'] => {
-        const following = row.fields[index + 1];
+      const following = row.fields[index + 1];
+      const target =
+        typeof field.fData === 'string' ? labelTargets.get(fieldKey(field.fData)) : undefined;
+      if (target && isLabel(field, target, following)) {
         if (!following || following.fData === undefined) {
           throw new ActivityNormalizationError(`Missing value after ${String(field.fData)}`);
         }
-        return following.fData;
-      };
-      switch (field.fData) {
-        case 'Description':
-          activity.description = text(next(), 'Description');
+        if (isLabelValue(following, target)) {
+          apply({ ...following, fID: target });
           index++;
-          break;
-        case 'Name To Appear On Reports':
-          activity.staffForReports = stringList(next(), 'Name To Appear On Reports');
-          index++;
-          break;
-        case 'Upload Photo':
-          activity.photo = text(next(), 'Upload Photo');
-          index++;
-          break;
-        case 'Poor Weather Plan':
-          activity.poorWeatherPlan = text(next(), 'Poor Weather Plan');
-          index++;
-          break;
-        case 'Is Pre Sign-up':
-          activity.isPreSignup = booleanValue(next(), 'Is Pre Sign-up');
-          index++;
-          break;
-        case 'Student Led':
-          activity.isStudentLed = booleanValue(next(), 'Student Led');
-          index++;
-          break;
-        case 'Student Leader Name(s)':
-          activity.studentLeaders = stringList(next(), 'Student Leader Name(s)');
-          index++;
-          break;
-        case 'Semester Cost':
-          activity.semesterCost = text(next(), 'Semester Cost');
-          index++;
-          break;
-        case 'Activity Runs From': {
-          const recurrence = row.fields[index + 4];
-          if (recurrence)
-            activity.duration.isRecurringWeekly = booleanValue(
-              recurrence.fData,
-              'recurrence',
-              true,
-            );
-          break;
+          continue;
         }
-        default:
-          if (!applyField(activity, field) && field.fData === 'Recurring Weekly') {
-            activity.duration.isRecurringWeekly = true;
-          }
-          break;
+      }
+      if (apply(field)) continue;
+      const recurrence = typeof field.fData === 'string' ? fieldKey(field.fData) : '';
+      if (['recurringweekly', 'weekly', 'recurringtwoweekly'].includes(recurrence)) {
+        if (following?.fType === 18) {
+          const checked = booleanControlValue(following, 'recurrence');
+          activity.duration.isRecurringWeekly =
+            recurrence === 'recurringtwoweekly' ? false : checked;
+          index++;
+        } else activity.duration.isRecurringWeekly = recurrence !== 'recurringtwoweekly';
       }
     }
+    if (hasMeeting) {
+      activity.meetings.push({ ...activity.meeting, staff: [...new Set(meetingStaff)] });
+      // Preserve the existing singular field for clients that have not adopted meetings.
+      legacyMeeting = structuredClone(activity.meeting);
+    }
   }
+  activity.meeting = legacyMeeting;
   if (!activity.name) throw new ActivityNormalizationError(`Activity ${id} has no name`);
   activity.description = prose(activity.description);
+  activity.descriptionZh = activity.descriptionZh === null ? null : prose(activity.descriptionZh);
+  if (!activity.description.trim() && activity.descriptionZh)
+    activity.description = activity.descriptionZh;
   activity.poorWeatherPlan = prose(activity.poorWeatherPlan);
   activity.semesterCost = prose(activity.semesterCost);
   activity.isStudentLed ??=
@@ -359,6 +475,20 @@ export function normalizeActivity(raw: RawActivity, requestedId: string): Activi
     activity.name.includes('学生社团') ||
     activity.name.includes('(SL)');
   activity.grades = parseGrades(activity.schedule);
+  // Use explicit grade hints only when the schedule has no grade constraint.
+  // Never replace a broken schedule range with a guess from a title or year.
+  if (
+    activity.grades.min === null &&
+    !/(?:^|[^A-Za-z0-9])(?:KG|G|Grades?|Years?)\s*\d/i.test(activity.schedule ?? '')
+  ) {
+    for (const hint of [...gradeHints, activity.name]) {
+      const grades = parseGrades(hint);
+      if (grades.min !== null) {
+        activity.grades = grades;
+        break;
+      }
+    }
+  }
   return activity;
 }
 

@@ -35,12 +35,14 @@ describe('activity normalization', () => {
       academicYear: null,
       category: null,
       description: '',
+      descriptionZh: null,
       photo: null,
       duration: { startDate: null, endDate: null, isRecurringWeekly: null },
       grades: { min: null, max: null },
       isPreSignup: null,
       isStudentLed: false,
       materials: [],
+      meetings: [],
       meeting: {
         day: null,
         startTime: null,
@@ -202,6 +204,32 @@ describe('activity normalization', () => {
     ).toBe(expected);
   });
 
+  test('treats explicit empty Engage checkboxes as unchecked before name inference', () => {
+    const result = activity(
+      [
+        { fID: null, fData: 'Student Led' },
+        { fID: '1', fType: 18, fData: null },
+        { fID: null, fData: 'Is Pre Sign-up' },
+        { fID: '1', fType: 18, fData: null },
+        { fID: 'isrecurringweekly', fType: 18, fData: null },
+      ],
+      'Chess (SL)',
+    );
+    expect(result.isStudentLed).toBe(false);
+    expect(result.isPreSignup).toBe(false);
+    expect(result.duration.isRecurringWeekly).toBe(false);
+    expect(
+      activity([{ fID: 'isstudentled', fType: 18, fData: null }], 'Chess (SL)').isStudentLed,
+    ).toBe(false);
+    expect(activity([{ fID: 'ispresignup', fType: 18, fData: null }]).isPreSignup).toBe(false);
+    expect(
+      activity([
+        { fID: null, fData: 'Student Led' },
+        { fID: '1', fType: 18, fData: 'x' },
+      ]).isStudentLed,
+    ).toBe(true);
+  });
+
   test.each([
     ['SLAM', false],
     ['SLAM Chess', false],
@@ -225,6 +253,8 @@ describe('activity normalization', () => {
     ['true', true],
     ['Yes', true],
     ['1', true],
+    ['x', true],
+    ['X', true],
   ] as const)('preserves explicit pre-signup value %s', (value, expected) => {
     expect(activity([{ fID: 'ispresignup', fData: value }]).isPreSignup).toBe(expected);
     expect(
@@ -290,6 +320,44 @@ describe('activity normalization', () => {
 });
 
 describe('grade schedules', () => {
+  test('resolves selection keys locally and uses explicit title grades only as fallback', () => {
+    const result = activity(
+      [
+        { fID: 'academicyear', fData: '2026', lParms: [{ key: '2026', val: '2026/2027' }] },
+        { fID: 'schedule', fData: '91', lParms: [{ key: '91', val: 'G7-G9' }] },
+        { fID: 'day', fData: '1', lParms: [{ key: '1', val: 'dwMonday' }] },
+      ],
+      'Chess (G10-12)',
+    );
+    expect(result.academicYear).toBe('2026/2027');
+    expect(result.schedule).toBe('G7-G9');
+    expect(result.grades).toEqual({ min: '7', max: '9' });
+    expect(result.meeting.day).toBe('Monday');
+    expect(
+      activity([
+        {
+          fID: 'room',
+          fData: '201',
+          lParms: [
+            { key: '201', val: '202' },
+            { key: '9', val: '201' },
+          ],
+        },
+      ]).meeting.location.room,
+    ).toBe('201');
+    expect(
+      activity([{ fID: 'schedule', fData: 'Evening study session' }], '托福强化班（G10-11） E')
+        .grades,
+    ).toEqual({ min: '10', max: '11' });
+    expect(activity([{ fID: 'yeargroup', fData: 'G3-G5' }]).grades).toEqual({ min: '3', max: '5' });
+    expect(activity([{ fID: 'schedule', fData: 'G5-1' }], 'Chess (G1-3)').grades).toEqual({
+      min: null,
+      max: null,
+    });
+    expect(
+      activity([{ fID: 'schedule', fData: '65', lParms: [{ key: '66', val: 'G7-G9' }] }]).grades,
+    ).toEqual({ min: null, max: null });
+  });
   test.each([
     ['G1-5', '1', '5'],
     ['G1-G5', '1', '5'],
@@ -304,6 +372,8 @@ describe('grade schedules', () => {
     ['G1, G3, G5', '1', '5'],
     ['G1-G3 & G7-G9', '1', '9'],
     ['年级G2至G4', '2', '4'],
+    ['2022.23 CCA S2 - KG2-KG3 - Internal', '2', '3'],
+    ['G1-G5 - External', '1', '5'],
   ])('parses %s', (schedule, min, max) => {
     expect(activity([{ fID: 'schedule', fData: schedule }]).grades).toEqual({ min, max });
   });
@@ -315,6 +385,8 @@ describe('grade schedules', () => {
     'G5-1',
     'G1-',
     'G1-G',
+    'KG2-KG3 -',
+    'KG2-KG3 - KG',
     'KG3-G2',
     'G1 and KG2',
     'Gx-5',
@@ -326,6 +398,124 @@ describe('grade schedules', () => {
       min: null,
       max: null,
     });
+  });
+});
+
+describe('structured recognition rules', () => {
+  test('normalizes labels without interpreting literal data as labels', () => {
+    const result = activity(
+      [
+        { fID: null, fData: '  CHINESE_DESCRIPTION： ' },
+        { fID: '1', fData: '每周play' },
+        { fID: null, fData: 'STUDENT-LED:' },
+        { fID: '1', fType: 18, fData: 'x' },
+        { fID: 'description', fType: 4, fData: 'Description' },
+        { fID: 'category', fData: 'Requirements' },
+      ],
+      'Description',
+    );
+    expect(result.name).toBe('Description');
+    expect(result.description).toBe('Description');
+    expect(result.category).toBe('Requirements');
+    expect(result.descriptionZh).toBe('每周 play');
+    expect(result.isStudentLed).toBe(true);
+    expect(
+      activity([
+        { fID: 'activityname', fType: 4, fData: 'Description' },
+        { fID: 'value', fData: 'ignored' },
+      ]).name,
+    ).toBe('Description');
+  });
+
+  test('keeps both languages and falls back to Chinese when English is empty', () => {
+    const fields: RawActivityField[] = [
+      { fID: null, fData: 'Chinese Description' },
+      { fID: '1', fData: '每周play<br/> 社团club' },
+    ];
+    expect(activity(fields)).toMatchObject({
+      descriptionZh: '每周 play\n社团 club',
+      description: '每周 play\n社团 club',
+    });
+    expect(
+      activity([...fields, { fID: 'description', fData: 'English description' }]),
+    ).toMatchObject({ description: 'English description', descriptionZh: '每周 play\n社团 club' });
+  });
+
+  test('preserves every meeting and unions staff without changing legacy meeting selection', () => {
+    const raw = parseRawActivity({
+      newRows: [
+        { rID: '42:3:3:0', fields: [{ fID: 'activityname', fData: 'Chess' }] },
+        {
+          rID: '42:4:4:1',
+          fields: [
+            { fID: 'day', fData: 'Monday' },
+            { fID: 'start', fData: '15:30' },
+            { fID: 'end', fData: '16:30' },
+            { fID: 'room', fData: '201' },
+            { fID: 'staff', fData: 'S1, S2' },
+          ],
+        },
+        {
+          rID: '42:4:4:2',
+          fields: [
+            { fID: 'day', fData: 'Friday' },
+            { fID: 'start', fData: '16:00' },
+            { fID: 'end', fData: '17:00' },
+            { fID: 'room', fData: '202' },
+            { fID: 'staff', fData: 'S2, S3' },
+          ],
+        },
+        { rID: '42:SAVE', fields: [{ fID: 'close', fData: 'Close' }] },
+      ],
+    });
+    const before = JSON.stringify(raw);
+    const result = normalizeActivity(raw, '42');
+    expect(result.meetings).toEqual([
+      {
+        day: 'Monday',
+        startTime: '15:30',
+        endTime: '16:30',
+        location: { site: null, block: null, room: '201' },
+        staff: ['S1', 'S2'],
+      },
+      {
+        day: 'Friday',
+        startTime: '16:00',
+        endTime: '17:00',
+        location: { site: null, block: null, room: '202' },
+        staff: ['S2', 'S3'],
+      },
+    ]);
+    expect(result.staff).toEqual(['S1', 'S2', 'S3']);
+    expect(result.meeting).toMatchObject({ day: 'Friday', location: { room: '202' } });
+    result.meeting.location.room = 'changed';
+    expect(result.meetings[1]?.location.room).toBe('202');
+    expect(JSON.stringify(raw)).toBe(before);
+  });
+
+  test('recognizes recurrence by its control rather than a fixed column offset', () => {
+    expect(
+      activity([
+        { fID: null, fData: 'Recurring Two-Weekly' },
+        { fID: 'checkbox', fType: 18, fData: 'x' },
+      ]).duration.isRecurringWeekly,
+    ).toBe(false);
+    expect(
+      activity([
+        { fID: null, fData: 'Activity Runs From' },
+        { fID: 'runsfrom', fData: '2026-09-01' },
+        { fID: null, fData: 'Extra layout' },
+        { fID: 'runsto', fData: '2026-12-31' },
+        { fID: null, fData: 'More layout' },
+        { fID: null, fData: 'Recurring Two-Weekly' },
+      ]).duration,
+    ).toEqual({ startDate: '2026-09-01', endDate: '2026-12-31', isRecurringWeekly: false });
+    expect(
+      activity([
+        { fID: null, fData: 'Recurring Weekly' },
+        { fID: 'checkbox', fType: 18, fData: null },
+      ]).duration.isRecurringWeekly,
+    ).toBe(false);
   });
 });
 

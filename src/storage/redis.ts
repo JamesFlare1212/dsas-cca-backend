@@ -15,6 +15,7 @@ const activitySchema: z.ZodType<Activity> = z.strictObject({
   academicYear: text,
   category: text,
   description: text,
+  descriptionZh: text.default(null),
   photo: text,
   duration: z.strictObject({ startDate: text, endDate: text, isRecurringWeekly: flag }),
   grades: z.strictObject({ min: text, max: text }),
@@ -27,6 +28,17 @@ const activitySchema: z.ZodType<Activity> = z.strictObject({
     endTime: text,
     location: z.strictObject({ block: text, room: text, site: text }),
   }),
+  meetings: z
+    .array(
+      z.strictObject({
+        day: text,
+        startTime: text,
+        endTime: text,
+        location: z.strictObject({ block: text, room: text, site: text }),
+        staff: z.array(z.string()),
+      }),
+    )
+    .default([]),
   poorWeatherPlan: text,
   schedule: text,
   semesterCost: text,
@@ -35,7 +47,7 @@ const activitySchema: z.ZodType<Activity> = z.strictObject({
   staffForReports: z.array(z.string()),
   studentLeaders: z.array(z.string()),
 });
-const activityEntrySchema = z.strictObject({
+export const activityEntrySchema = z.strictObject({
   value: activitySchema.nullable(),
   fetchedAt: timestamp,
 });

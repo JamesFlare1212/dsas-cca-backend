@@ -597,6 +597,29 @@ describe('EngageClient', () => {
     }
   });
 
+  test('real HTTP 200 errorblock failures remain outages, not cached missing activities', async () => {
+    const body = {
+      isError: true,
+      newRows: [
+        {
+          rID: 'errorblock',
+          fields: [
+            { fID: null, fType: 62, fData: 'Error' },
+            { fID: null, fType: 50, fData: 'error' },
+            { fID: 'error', fType: 46, fData: 'Sequence contains no elements' },
+          ],
+        },
+      ],
+    };
+    const { client, refreshes, calls } = fixture([activityResponse(body)], { maxRetries: 3 });
+    await expect(client.fetchActivity('3000')).rejects.toMatchObject({
+      code: 'UPSTREAM_UNAVAILABLE',
+      status: 503,
+    });
+    expect(refreshes).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
   test('an authentication failure after refresh is final even with retries available', async () => {
     const { client, refreshes, calls } = fixture(
       [new Response('', { status: 401 }), new Response('', { status: 403 })],

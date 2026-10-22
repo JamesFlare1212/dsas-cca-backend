@@ -63,6 +63,26 @@ function seed(repository: MemoryRepository) {
 }
 
 describe('HTTP API compatibility and validation', () => {
+  test('detail exposes bilingual content and all meetings alongside the legacy field', async () => {
+    const { app, catalog } = fixture();
+    const value = activity('42');
+    value.descriptionZh = '中文描述';
+    value.meetings = [
+      { ...structuredClone(value.meeting), staff: ['T1'] },
+      { ...structuredClone(value.meeting), day: 'Friday', staff: ['T2'] },
+    ];
+    value.meeting.day = 'Friday';
+    catalog.getActivity = async () => ({ entry: { value, fetchedAt }, cache: 'HIT' });
+    const response = await app.request('/v1/activity/42');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      descriptionZh: '中文描述',
+      meetings: value.meetings,
+      meeting: value.meeting,
+      cache: 'HIT',
+    });
+  });
+
   test('list is the legacy ID-to-summary map, including all results without pagination', async () => {
     const { app, repository } = fixture();
     seed(repository);

@@ -13,6 +13,7 @@ const legacyActivity = z.object({
   academicYear: nullableText,
   category: nullableText,
   description: nullableText,
+  descriptionZh: nullableText,
   photo: nullableText,
   duration: z
     .object({
@@ -41,6 +42,19 @@ const legacyActivity = z.object({
       location: { block: null, room: null, site: null },
     }),
   poorWeatherPlan: nullableText,
+  meetings: z
+    .array(
+      z.object({
+        day: nullableText,
+        startTime: nullableText,
+        endTime: nullableText,
+        location: z
+          .object({ block: nullableText, room: nullableText, site: nullableText })
+          .default({ block: null, room: null, site: null }),
+        staff: list,
+      }),
+    )
+    .default([]),
   schedule: nullableText,
   semesterCost: nullableText,
   requirements: list,

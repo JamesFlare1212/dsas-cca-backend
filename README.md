@@ -188,6 +188,10 @@ curl --get http://127.0.0.1:3000/v1/activity/list \
 
 `GET /v1/activity/:activityId` 接受 1–9 位数字 ID。响应包含归一化后的完整活动字段，包括 `id`、`name`、`academicYear`、`category`、`description`、`photo`、`duration`、`grades`、`meeting`、`staff`、`staffForReports` 与 `studentLeaders`，并在同一层保留 `lastCheck` 和 `cache` 元数据。详情中的缺失标量使用 `null`，集合使用数组。活动不存在时返回 404，响应包含 `error`、`lastCheck`、`source: "api-fetch-empty"` 和 `cache`。
 
+详情还提供 `descriptionZh` 和 `meetings`。`descriptionZh` 单独保留中文描述；`description` 优先使用英文，英文为空时回退到中文。`meetings` 按上游顺序保存每个时段的 `day`、`startTime`、`endTime`、`location` 和 `staff`，顶层 `staff` 是所有时段教职工的去重并集。旧 `meeting` 继续保留最后一个时段的取值。已有缓存缺少新增字段时，读取为 `null`/`[]`，下一次正常刷新后补齐；旧缓存不能还原此前未保存的时段。
+
+识别规则优先使用字段 ID，并结合控件类型和相邻标签识别通用值控件，避免把正文中的标签词当成字段名。选择控件仅用本条响应中的 `lParms` 解析选项键；年级优先取日程中的明确范围，缺少范围时再使用显式年级控件和活动名称中的年级标记。破损范围或缺失的日程引用保持未知，不通过学年或其他活动猜填。扫描范围仍由 `MIN_ACTIVITY_ID_SCAN` / `MAX_ACTIVITY_ID_SCAN` 显式控制，需要覆盖期望采集的所有活动 ID。
+
 `GET /v1/staffs` 保留教职工 ID 到姓名的映射，元数据也放在同一层：
 
 ```json
@@ -209,6 +213,8 @@ curl --get http://127.0.0.1:3000/v1/activity/list \
 输入错误通常为 400，HTTP 限流为 429，Redis/上游暂不可用为 503，请求超时或取消为 504。错误响应使用 `error`，并视情况提供 `code`、`requestId`；日志与配置错误不会输出账户、Cookie 或 Redis URL 中的凭据。
 
 认证恢复支持 401/403、登录重定向和登录页面。针对旧 Engage 会话过期时返回 500 的行为，客户端会先用同一 Cookie 做一次有超时、并发合并和冷却限制的会话检查；只有确认需要登录才刷新会话，普通 500 继续作为上游故障处理。
+
+Engage 也会用 HTTP 200 返回业务错误：`d` 字符串解码后为 `isError: true`，`newRows` 中出现 `rID: "errorblock"`，错误控件 `fID: "error"` 的 `fData` 可为 `"Sequence contains no elements"`。该错误没有明确证明活动不存在，API 保持返回 503，不刷新有效 Cookie，也不将它缓存为 404。
 
 ### 健康检查与指标
 

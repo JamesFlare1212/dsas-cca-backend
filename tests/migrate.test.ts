@@ -28,3 +28,16 @@ test('staff migration removes cache metadata and never retains empty error snaps
   expect(decodeLegacyStaff({ error: 'failed' })).toBeNull();
   expect(decodeLegacyStaff({ lastCheck: 'old' })).toBeNull();
 });
+
+test('migration retains bilingual and multiple-meeting data and defaults old payloads', () => {
+  const current = activity();
+  current.descriptionZh = '中文描述';
+  current.meetings = [{ ...structuredClone(current.meeting), staff: ['T1'] }];
+  expect(decodeLegacyActivity(current, current.id)?.value).toEqual(current);
+  const { descriptionZh: _zh, meetings: _meetings, ...old } = current;
+  expect(decodeLegacyActivity(old, current.id)?.value).toMatchObject({
+    descriptionZh: null,
+    meetings: [],
+    meeting: current.meeting,
+  });
+});

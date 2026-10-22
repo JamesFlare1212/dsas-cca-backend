@@ -4,7 +4,7 @@ import Redis from 'ioredis';
 import pino from 'pino';
 import { AppError } from '../src/core/errors.ts';
 import type { Activity } from '../src/domain/activity.ts';
-import { RedisRepository } from '../src/storage/redis.ts';
+import { activityEntrySchema, RedisRepository } from '../src/storage/redis.ts';
 import type { CacheEntry } from '../src/storage/repository.ts';
 
 const logger = pino({ level: 'silent' });
@@ -17,12 +17,14 @@ function activity(id = '123'): Activity {
     academicYear: '2026',
     category: 'Club',
     description: null,
+    descriptionZh: null,
     photo: 'https://images.example.test/chess.avif',
     duration: { startDate: null, endDate: null, isRecurringWeekly: true },
     grades: { min: '3', max: '8' },
     isPreSignup: false,
     isStudentLed: true,
     materials: [],
+    meetings: [],
     meeting: {
       day: 'Monday',
       startTime: null,
@@ -45,6 +47,26 @@ function entry(
 ): CacheEntry<Activity> {
   return { value, fetchedAt };
 }
+
+test('activity records preserve new detail fields and accept existing v2 cache entries', () => {
+  const current = activity();
+  current.descriptionZh = '中文描述';
+  current.meetings = [
+    { ...structuredClone(current.meeting), staff: ['1', '2'] },
+    { ...structuredClone(current.meeting), day: 'Friday', staff: ['3'] },
+  ];
+  expect(activityEntrySchema.parse(JSON.parse(JSON.stringify(entry(current))))).toEqual(
+    entry(current),
+  );
+  const { descriptionZh: _zh, meetings: _meetings, ...old } = current;
+  const restored = activityEntrySchema.parse(entry(old as Activity));
+  expect(restored.value?.descriptionZh).toBeNull();
+  expect(restored.value?.meetings).toEqual([]);
+  expect(restored.value?.meeting).toEqual(current.meeting);
+  expect(() =>
+    activityEntrySchema.parse(entry({ ...current, meetings: 'invalid' } as unknown as Activity)),
+  ).toThrow();
+});
 
 async function waitForAbort(signal: AbortSignal): Promise<void> {
   if (signal.aborted) return;
