@@ -296,7 +296,30 @@ docker compose up --detach app
 bun run check
 ```
 
-这会依次执行 TypeScript、Biome 和单元测试。真实 Redis 集成测试需要显式启用，建议使用独立的临时实例：
+这会依次执行 TypeScript、Biome、单元测试和全部离线 HTTP 语料回归。`tests/fixtures/engage-corpus/` 覆盖 ID 0–11000，输入与独立预期分别压缩保存；每个 ID 都验证传输分类、活动和教职工解析、缓存格式往返。上游业务错误和空白表单作为负例保留，不会丢弃后只测成功样本。
+
+```sh
+bun run test:corpus
+bun run test:corpus:validation
+```
+
+验证分组按原始活动标题归组，近似 80/20 划分，同组不跨集合；这里是已观察活动的回归验证，不能当作未见数据泛化评估。预期结果由 `scripts/engage-corpus/oracle.ts` 直接读取源控件产生，不调用生产解析器；测试使用冻结预期，修改解析器不会自动改写答案。输入、预期和原始响应体均有 SHA-256 校验。格式化差异仅允许已有的空白、标点和名称排版规范。
+
+需要重新采集时，显式执行下列命令；它们会读取本地 `.env` 并访问真实 Engage，常规测试和 CI 不执行采集：
+
+```sh
+bun run corpus:capture
+bun run test:corpus:raw
+bun run corpus:build
+```
+
+原始响应保存在 Git 忽略的 `data/engage-corpus/raw/`，包含状态、响应头和未经改写的 Fetch 响应体字节；Fetch 可能已经解开传输/内容编码，因此它不是 TCP 抓包。原文可能包含个人信息或 Cookie，目录和文件使用私有权限。采集可从摘要校验通过的检查点续跑。切换采集目录可设置 `RAW_CORPUS_DIR`。
+
+构建器先验证完整的 11001 个原文，再验证清洗副本，全部通过才发布测试集。清洗会替换人名、人员标识、自由描述和活动标题，标题中的年级/学生主导标记保留；图片换成有效的单像素 PNG，学生查找值和无关 UI 元数据去除，HTTP 头只保留重建后的安全字段。原文中的内容正确性先在私有目录验证；公开语料重点保留源控件结构及字段关系。原始教职工名称逐项检查，仅允许既有人工预期明确列出的历史纠正（以冻结摘要白名单保存）；清洗后的完整目录名称按伪名精确验证。稳定化种子仅存于原始目录，不能提交。
+
+任何缺失、校验失败、未知响应或语义不一致都会写入 `data/engage-corpus/quarantine.json` 并阻止发布，不自动用解析器结果“更新预期”。请先检查对应原文及独立提取规则，确认修复后再构建。
+
+真实 Redis 集成测试需要显式启用，建议使用独立的临时实例：
 
 ```sh
 RUN_REDIS_TESTS=1 TEST_REDIS_URL=redis://127.0.0.1:6379/0 bun run test:integration

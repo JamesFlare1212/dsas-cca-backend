@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**", "tests/**", "scripts/**", "*.json", "*.md", "!bun.lock"]
+    "includes": [
+      "src/**",
+      "tests/**",
+      "scripts/**",
+      "*.json",
+      "*.md",
+      "!bun.lock",
+      "!tests/fixtures/engage-corpus"
+    ]
   },
   "formatter": {
     "enabled": true,
