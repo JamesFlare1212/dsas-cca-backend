@@ -64,7 +64,7 @@ jobs:
       - name: Install browser system dependencies
         run: sudo "$(command -v bun)" node_modules/playwright-core/cli.js install-deps chromium
       - run: bun run browser:install
-      - name: Verify real browser authentication against a local fixture
+      - name: Verify authentication and interactive docs against local fixtures
         run: bun run test:browser
 
   container-smoke:

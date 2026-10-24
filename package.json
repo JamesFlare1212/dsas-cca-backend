@@ -25,7 +25,7 @@
     "browser:smoke": "bun run scripts/browser-smoke.ts",
     "cookie:get": "bun run scripts/login.ts",
     "cache:migrate": "bun run scripts/migrate-cache.ts",
-    "test:browser": "RUN_BROWSER_TESTS=1 bun test ./tests/browser.test.ts"
+    "test:browser": "RUN_BROWSER_TESTS=1 bun test ./tests/browser.test.ts ./tests/docs-browser.test.ts"
   },
   "dependencies": {
     "cloakbrowser": "0.6.3",

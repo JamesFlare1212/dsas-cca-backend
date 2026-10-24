@@ -142,7 +142,7 @@ docker compose run --rm --no-deps app bun run cookie:get
 
 ## HTTP 接口
 
-访问 `GET /v1/` 查看 HTML API 文档，包含接口、查询参数、响应示例、缓存与错误说明；`/v1` 自动跳转到 `/v1/`。文档无需外部资源，不会触发数据采集或读取 Redis。
+访问 `GET /v1/` 查看交互式 HTML API 文档，包含接口、查询参数、响应示例、缓存与错误说明；`/v1` 自动跳转到 `/v1/`。在线调试支持选择接口、填写参数、预览 URL、复制 cURL、发送与取消真实请求，并展示状态码、耗时、响应头和格式化响应体（JSON 或文本）。请求发送到当前服务，遵循原有缓存与限流规则；详情与教职工请求可能触发上游采集。页面无需外部资源，打开文档本身不会触发数据采集或读取 Redis，只有点击发送才请求数据。
 
 所有下列数据接口均使用 `GET`，JSON 响应保持原有结构。每次请求都会生成 `X-Request-ID`。活动详情和教职工响应还提供 `X-Cache` 与 `X-Data-Updated-At`，其中更新时间对应数据实际抓取时间。CORS 允许前端读取这三个响应头。
 
@@ -335,7 +335,7 @@ RUN_REDIS_TESTS=1 TEST_REDIS_URL=redis://127.0.0.1:6379/0 bun run test:integrati
 
 集成测试使用随机键命名空间并清理自身数据。不要把测试配置指向生产 Redis。
 
-真实 CloakBrowser 登录测试使用临时本地 Engage 页面和虚构凭据，验证并发登录合并、会话复用及过期重登：
+真实 CloakBrowser 测试使用临时本地 Engage 页面和虚构凭据，验证并发登录合并、会话复用及过期重登；同时验证交互文档的真实 HTTP 请求、参数编码、错误展示、取消恢复及移动端布局：
 
 ```sh
 bun run browser:install

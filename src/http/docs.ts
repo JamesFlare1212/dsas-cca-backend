@@ -1,3 +1,5 @@
+import { initializeApiExplorer } from './docs-client.ts';
+
 export const apiDocs = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -17,6 +19,33 @@ export const apiDocs = `<!doctype html>
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px; text-align: left; border-bottom: 1px solid #8886; }
     nav ul { display: flex; flex-wrap: wrap; gap: 8px 24px; padding-left: 20px; }
+    :root { --panel: light-dark(#f7f9fc, #181c23); --border: light-dark(#d4dbe7, #404959); }
+    section { scroll-margin-top: 24px; }
+    .explorer { margin-top: 32px; padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+    .explorer h2 { margin-top: 0; }
+    fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+    legend { margin-bottom: 12px; font-weight: 600; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; }
+    input, select, button { box-sizing: border-box; font: inherit; border: 1px solid var(--border); border-radius: 6px; }
+    input, select { width: 100%; padding: 9px 12px; background: light-dark(#fff, #232a35); color: inherit; }
+    input::placeholder { color: light-dark(#636e80, #a5afc0); }
+    button { min-height: 44px; padding: 8px 16px; background: light-dark(#fff, #232a35); color: inherit; cursor: pointer; }
+    button.primary { background: light-dark(#1657b8, #92bcff); color: light-dark(#fff, #10213b); border-color: transparent; }
+    button:disabled { opacity: .5; cursor: default; }
+    :focus-visible { outline: 3px solid light-dark(#1657b8, #92bcff); outline-offset: 3px; }
+    .parameters { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 20px 0; }
+    [hidden] { display: none !important; }
+    .hint { color: light-dark(#536078, #adb8cb); font-size: .9rem; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 20px; }
+    .url { display: block; padding: 12px; border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }
+    .result { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+    #response-status { font-weight: 600; }
+    [data-state="success"] { color: light-dark(#17653a, #78d6a1); }
+    [data-state="error"] { color: light-dark(#a32132, #ff9fae); }
+    [data-state="pending"] { color: light-dark(#765600, #e9cb78); }
+    .result pre { max-height: 560px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    summary { cursor: pointer; font-weight: 600; }
+    @media (max-width: 520px) { body { padding: 16px; } .explorer { padding: 16px; } }
   </style>
 </head>
 <body>
@@ -24,6 +53,7 @@ export const apiDocs = `<!doctype html>
   <h1>DSAS CCA API 文档</h1>
   <p>接口前缀：<code>/v1</code>。所有数据接口使用 <code>GET</code>，返回 JSON。
     以下路径均相对于当前服务地址；示例数据仅用于说明结构。</p>
+  <p><a href="#explorer">在线调试：填写参数并发送真实请求 ↓</a></p>
   <nav aria-label="文档目录"><ul>
     <li><a href="#list">活动列表</a></li>
     <li><a href="#counts">分类与学年</a></li>
@@ -35,6 +65,58 @@ export const apiDocs = `<!doctype html>
   </ul></nav>
 </header>
 <main>
+  <section id="explorer" class="explorer" aria-labelledby="explorer-title">
+    <h2 id="explorer-title">在线调试</h2>
+    <p>请求发送到当前服务。选择接口、填写参数后，点击「发送请求」查看实际响应。
+      详情与教职工接口可能触发上游采集，所有请求遵循服务的限流与缓存规则。</p>
+    <noscript><p>在线调试需要启用 JavaScript。下方接口说明和示例仍可阅读。</p></noscript>
+    <form id="api-explorer" aria-busy="false">
+      <fieldset id="request-fields" disabled>
+        <label for="request-endpoint">接口</label>
+        <select id="request-endpoint">
+          <option value="/v1/activity/list">GET /v1/activity/list — 活动列表</option>
+          <option value="/v1/activity/category">GET /v1/activity/category — 分类统计</option>
+          <option value="/v1/activity/academicYear">GET /v1/activity/academicYear — 学年统计</option>
+          <option value="/v1/activity/:activityId">GET /v1/activity/:activityId — 活动详情</option>
+          <option value="/v1/staffs">GET /v1/staffs — 教职工</option>
+          <option value="/health/live">GET /health/live — 存活检查</option>
+          <option value="/health/ready">GET /health/ready — 就绪检查</option>
+          <option value="/metrics">GET /metrics — 指标</option>
+        </select>
+        <fieldset id="list-filters" class="parameters" aria-describedby="filter-hint">
+          <legend>查询参数（可选）</legend>
+          <div><label for="request-category">category</label><input id="request-category" name="category" maxlength="200" placeholder="分类名称"></div>
+          <div><label for="request-year">academicYear</label><input id="request-year" name="academicYear" pattern="[0-9]{4}/[0-9]{4}" placeholder="2026/2027"></div>
+          <div><label for="request-grade">grade</label><input id="request-grade" name="grade" type="number" min="-2" max="12" step="1" placeholder="-2 至 12"></div>
+          <div><label for="request-led">isStudentLed</label><select id="request-led" name="isStudentLed"><option value="">不筛选</option><option value="true">true</option><option value="false">false</option></select></div>
+          <div><label for="request-limit">limit</label><input id="request-limit" name="limit" type="number" min="1" max="500" step="1" placeholder="不限制条数"></div>
+          <div><label for="request-offset">offset</label><input id="request-offset" name="offset" type="number" min="0" max="999999" step="1" placeholder="0"></div>
+        </fieldset>
+        <p id="filter-hint" class="hint">留空的参数不会发送。grade：KG1=-2、KG2=-1、KG3=0，G1–G12=1–12。</p>
+        <fieldset id="detail-parameters" class="parameters" hidden disabled>
+          <legend>路径参数</legend>
+          <div><label for="request-activity-id">activityId（必填）</label><input id="request-activity-id" inputmode="numeric" pattern="[0-9]{1,9}" maxlength="9" required placeholder="例如 7095"></div>
+        </fieldset>
+      </fieldset>
+      <h3>请求 URL</h3>
+      <code id="request-url" class="url">启用 JavaScript 后预览请求 URL。</code>
+      <div class="actions">
+        <button id="request-send" class="primary" type="submit" disabled>发送请求</button>
+        <button id="request-cancel" type="button" disabled>取消请求</button>
+        <button id="request-reset" type="reset" disabled>重置参数</button>
+        <button id="copy-curl" type="button">复制 cURL</button>
+        <span id="copy-status" class="hint" role="status"></span>
+      </div>
+    </form>
+    <details><summary>cURL 命令</summary><pre><code id="request-curl">启用 JavaScript 后生成 cURL。</code></pre></details>
+    <div class="result">
+      <h3>实际响应</h3>
+      <p id="response-status" role="status" aria-live="polite">尚未发送请求</p>
+      <code id="response-url"></code>
+      <details><summary>响应头</summary><pre id="response-headers" tabindex="0"></pre></details>
+      <pre id="response-body" tabindex="0" aria-label="响应体">点击「发送请求」后在此查看响应。</pre>
+    </div>
+  </section>
   <section id="list">
     <h2>活动列表</h2>
     <p><a href="/v1/activity/list"><code>GET /v1/activity/list</code></a></p>
@@ -169,5 +251,6 @@ export const apiDocs = `<!doctype html>
     </ul>
   </section>
 </main>
+<script>(${initializeApiExplorer.toString()})();</script>
 </body>
 </html>`;
