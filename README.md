@@ -142,6 +142,8 @@ docker compose run --rm --no-deps app bun run cookie:get
 
 ## HTTP 接口
 
+访问 `GET /v1/` 查看 HTML API 文档，包含接口、查询参数、响应示例、缓存与错误说明；`/v1` 自动跳转到 `/v1/`。文档无需外部资源，不会触发数据采集或读取 Redis。
+
 所有下列数据接口均使用 `GET`，JSON 响应保持原有结构。每次请求都会生成 `X-Request-ID`。活动详情和教职工响应还提供 `X-Cache` 与 `X-Data-Updated-At`，其中更新时间对应数据实际抓取时间。CORS 允许前端读取这三个响应头。
 
 ### 活动列表

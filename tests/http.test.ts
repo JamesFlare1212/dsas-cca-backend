@@ -64,6 +64,39 @@ function seed(repository: MemoryRepository) {
 }
 
 describe('HTTP API compatibility and validation', () => {
+  test('API docs and canonical redirect work without storage or upstream access', async () => {
+    const { app, repository, catalog } = fixture();
+    repository.failure = new AppError('STORAGE_UNAVAILABLE', 'Redis is unavailable.');
+    catalog.getActivity = catalog.getStaff = async () => {
+      throw new Error('Documentation must not access the upstream');
+    };
+    const redirect = await app.request('/v1');
+    expect(redirect.status).toBe(308);
+    expect(redirect.headers.get('Location')).toBe('/v1/');
+
+    const response = await app.request('/v1/');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toContain('text/html');
+    expect(response.headers.get('X-Request-ID')).toBeTruthy();
+    const body = await response.text();
+    expect(body).toContain('<title>DSAS CCA API 文档</title>');
+    for (const path of [
+      '/v1/activity/list',
+      '/v1/activity/category',
+      '/v1/activity/academicYear',
+      '/v1/activity/:activityId',
+      '/v1/staffs',
+    ]) {
+      expect(body).toContain(path);
+    }
+    const head = await app.request('/v1/', { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(head.headers.get('Content-Type')).toContain('text/html');
+    expect(await head.text()).toBe('');
+    const index = await app.request('/');
+    expect((await index.json()).endpoints).toContain('/v1/');
+  });
+
   test('detail exposes bilingual content and all meetings alongside the legacy field', async () => {
     const { app, catalog } = fixture();
     const value = activity('42');

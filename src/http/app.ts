@@ -8,6 +8,7 @@ import type { Logger } from '../core/logger.ts';
 import type { Metrics } from '../core/metrics.ts';
 import type { CatalogService } from '../services/catalog.ts';
 import type { Repository } from '../storage/repository.ts';
+import { apiDocs } from './docs.ts';
 
 const filtersSchema = z.object({
   category: z.string().min(1).max(200).optional(),
@@ -125,6 +126,7 @@ export function createApp(deps: AppDependencies) {
       name: 'DSAS CCA API',
       version: 2,
       endpoints: [
+        '/v1/',
         '/v1/activity/list',
         '/v1/activity/category',
         '/v1/activity/academicYear',
@@ -135,6 +137,8 @@ export function createApp(deps: AppDependencies) {
       ],
     }),
   );
+  app.get('/v1', (context) => context.redirect('/v1/', 308));
+  app.get('/v1/', (context) => context.html(apiDocs));
   app.get('/health/live', (context) => context.json({ status: 'ok' }));
   app.get('/health/ready', async (context) => {
     if (deps.isShuttingDown?.()) return context.json({ status: 'shutting_down' }, 503);
