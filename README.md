@@ -115,6 +115,23 @@ docker compose --project-name dsas-cca-local -f docker-compose.yaml -f docker-co
 
 `docker compose down` 保留命名卷；`docker compose down --volumes` 会删除持久化数据。备份或还原 Redis 时同时考虑 AOF 与 RDB，并保留对应的应用配置。不要用空目录覆盖镜像内的 `/opt/cloakbrowser`。
 
+## 使用 Coolify
+
+[docker-compose.coolify.yaml](docker-compose.coolify.yaml) 是独立的 Coolify 配置。Coolify 拉取指定 Git 提交后，使用仓库根目录的 `Dockerfile` 构建应用镜像并部署，无需 GHCR 应用镜像或服务器上的 `.env` 文件。`pull_policy: build` 确保部署时执行构建，未变化的层仍可复用 Docker 缓存。应用和 Redis 的数据分别保存在命名卷中，保留浏览器共享内存、健康检查和 Redis 就绪依赖；更新由 Coolify 管理，不启动 Watchtower。
+
+1. 在 Coolify 通过 GitHub App 或其他 Git 来源新建**仓库应用**，选择要跟踪的分支（例如 `master`）与 Docker Compose 构建方式。Base Directory 设为 `/`，Compose 文件位置设为 `/docker-compose.coolify.yaml`。使用普通 Compose 部署模式，保持 **Raw / deploy file as-is** 关闭。
+2. 在 **Environment Variables** 填写 `API_USERNAME`、`API_PASSWORD`。此文件默认 `API_CREDENTIALS_URL_ENCODED=false`，直接填写明文；若沿用旧版分别 URL 编码的凭据，设置为 `true`。
+3. Coolify 自动生成并复用 `SERVICE_PASSWORD_REDIS`，无需填写普通 Compose 使用的 `REDIS_PASSWORD`。如手动修改，使用仅含字母和数字的密码，保证拼接的 Redis URL 有效。
+4. 在 `app` 的域名设置中确认或修改生成的域名，容器目标端口为 `3000`，例如 `https://api.example.com:3000`。外部访问使用 `https://api.example.com`，应用和 Redis 均不映射宿主机端口。
+5. 在 **Advanced > Deployment > Auto deploy** 启用 **Deploy on push (webhooks)**（部分版本显示为 **Auto Deploy**）。通过 GitHub App 接入的仓库由集成接收推送事件；通过公开仓库 URL 或 deploy key 接入时，需将 Coolify **Webhooks > Manual Git Webhooks** 中对应 Git 提供方的 URL 和 secret 配置到仓库 webhook，并启用 push 事件。
+6. 首次手动部署后，检查 `https://api.example.com/health/ready`，API 文档位于 `/v1/`。将新提交推送到所选分支后，在 Coolify 部署日志中确认对应提交触发了新的镜像构建和部署。仅在本地创建 commit 不会触发远程部署。
+
+自动部署需要在 Coolify 和 Git 提供方完成上述事件配置，Compose 文件本身只定义构建与运行方式。请使用 Git 仓库应用，以便构建上下文包含 `Dockerfile` 和源代码。服务器构建时需要访问 Bun 镜像、依赖仓库和 CloakBrowser 下载源；Redis 仍拉取固定版本的官方镜像。
+
+采集、限流、CORS 和 S3 等配置已显式声明，可直接在 Coolify 环境变量页面调整；S3 的 bucket 与两个访问凭据必须同时填写。此配置创建自己的持久化卷，不会自动导入已有 Compose 部署的数据。
+
+域名、自动生成变量和 Compose 部署模式的行为参见 [Coolify Compose 文档](https://coolify.io/docs/applications/builds/docker-compose)；Git 推送触发配置参见 [自动部署](https://coolify.io/docs/applications/deployments/automatic-deployments)与[手动 Git Webhooks](https://coolify.io/docs/applications/deployments/manual-webhooks)。
+
 ## 本地开发
 
 安装 Bun 1.4.3，准备可访问的 Redis，并在 `.env` 中填写账户配置与 `REDIS_URL`。Compose 的 Redis 默认没有宿主机端口，因此本地 Bun 需要独立的本地 Redis，或自行配置开发环境的端口转发。

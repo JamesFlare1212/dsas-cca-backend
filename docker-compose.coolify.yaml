@@ -1,0 +1,119 @@
+# Standalone Git-based Coolify stack; do not merge with docker-compose.yaml.
+# Enable auto deploy in Coolify to build pushed commits with the repository Dockerfile.
+# Set API_USERNAME and API_PASSWORD in Coolify (plain text by default).
+# Coolify generates SERVICE_PASSWORD_REDIS and a domain for app port 3000.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
+    init: true
+    expose:
+      - "3000"
+    environment:
+      SERVICE_URL_APP_3000: /
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /usr/src/app/data
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      API_BASE_URL: ${API_BASE_URL:-https://engage.nkcswx.cn}
+      API_USERNAME: ${API_USERNAME:?Set API_USERNAME in Coolify}
+      API_PASSWORD: ${API_PASSWORD:?Set API_PASSWORD in Coolify}
+      API_CREDENTIALS_URL_ENCODED: ${API_CREDENTIALS_URL_ENCODED:-false}
+      AUTH_LOGIN_TIMEOUT_MS: ${AUTH_LOGIN_TIMEOUT_MS:-60000}
+      AUTH_FAILURE_COOLDOWN_MS: ${AUTH_FAILURE_COOLDOWN_MS:-30000}
+      REDIS_URL: redis://:${SERVICE_PASSWORD_REDIS:?Set SERVICE_PASSWORD_REDIS in Coolify}@redis:6379/0
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-dsas:v2}
+      CLOAKBROWSER_CACHE_DIR: /opt/cloakbrowser
+      CLOAKBROWSER_AUTO_UPDATE: "false"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+      HTTP_REQUESTS_PER_MINUTE: ${HTTP_REQUESTS_PER_MINUTE:-600}
+      HTTP_TIMEOUT_MS: ${HTTP_TIMEOUT_MS:-120000}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-15000}
+      FIXED_STAFF_ACTIVITY_ID: ${FIXED_STAFF_ACTIVITY_ID:-7095}
+      MIN_ACTIVITY_ID_SCAN: ${MIN_ACTIVITY_ID_SCAN:-3000}
+      MAX_ACTIVITY_ID_SCAN: ${MAX_ACTIVITY_ID_SCAN:-8000}
+      CONCURRENT_API_CALLS: ${CONCURRENT_API_CALLS:-4}
+      MAX_PENDING_FETCHES: ${MAX_PENDING_FETCHES:-256}
+      CRAWLER_REQUEST_TIMEOUT_MS: ${CRAWLER_REQUEST_TIMEOUT_MS:-15000}
+      CRAWLER_MAX_RETRIES: ${CRAWLER_MAX_RETRIES:-2}
+      CRAWLER_RETRY_DELAY_MS: ${CRAWLER_RETRY_DELAY_MS:-1000}
+      CRAWLER_REQUESTS_PER_MINUTE: ${CRAWLER_REQUESTS_PER_MINUTE:-120}
+      MAX_UPSTREAM_RESPONSE_BYTES: ${MAX_UPSTREAM_RESPONSE_BYTES:-20000000}
+      CIRCUIT_FAILURE_THRESHOLD: ${CIRCUIT_FAILURE_THRESHOLD:-5}
+      CIRCUIT_COOLDOWN_MS: ${CIRCUIT_COOLDOWN_MS:-30000}
+      CLUB_UPDATE_INTERVAL_MINS: ${CLUB_UPDATE_INTERVAL_MINS:-360}
+      STAFF_UPDATE_INTERVAL_MINS: ${STAFF_UPDATE_INTERVAL_MINS:-360}
+      CLUB_CHECK_INTERVAL_SECONDS: ${CLUB_CHECK_INTERVAL_SECONDS:-60}
+      STAFF_CHECK_INTERVAL_SECONDS: ${STAFF_CHECK_INTERVAL_SECONDS:-60}
+      DISCOVERY_INTERVAL_MINS: ${DISCOVERY_INTERVAL_MINS:-360}
+      ERROR_CACHE_TTL: ${ERROR_CACHE_TTL:-3600}
+      FAILED_FETCH_RETRY_SECONDS: ${FAILED_FETCH_RETRY_SECONDS:-60}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PUBLIC_URL_PREFIX: ${S3_PUBLIC_URL_PREFIX:-files}
+      IMAGE_MAX_INPUT_BYTES: ${IMAGE_MAX_INPUT_BYTES:-10000000}
+      IMAGE_MAX_PIXELS: ${IMAGE_MAX_PIXELS:-24000000}
+      IMAGE_CONCURRENCY: ${IMAGE_CONCURRENCY:-2}
+      IMAGE_PROCESS_TIMEOUT_MS: ${IMAGE_PROCESS_TIMEOUT_MS:-10000}
+    volumes:
+      - app-data:/usr/src/app/data
+    shm_size: 256mb
+    restart: unless-stopped
+    stop_grace_period: 25s
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - --eval
+        - "const response = await fetch('http://127.0.0.1:3000/health/ready', { signal: AbortSignal.timeout(4000) }); if (!response.ok) process.exit(1);"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "15m"
+        max-file: "3"
+
+  redis:
+    image: redis:8.10.2-alpine3.23@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    user: redis:redis
+    environment:
+      REDIS_PASSWORD: ${SERVICE_PASSWORD_REDIS:?Set SERVICE_PASSWORD_REDIS in Coolify}
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    stop_grace_period: 25s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'test "$$(REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli --raw ping)" = PONG'
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "15m"
+        max-file: "3"
+
+volumes:
+  app-data:
+  redis-data:
