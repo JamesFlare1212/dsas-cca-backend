@@ -118,7 +118,6 @@ docker compose --project-name dsas-cca-local -f docker-compose.yaml -f docker-co
 ## 使用 Coolify
 
 [docker-compose.coolify.yaml](docker-compose.coolify.yaml) 是独立的 Coolify 配置。Coolify 拉取指定 Git 提交后，使用仓库根目录的 `Dockerfile` 构建应用镜像并部署，无需 GHCR 应用镜像或服务器上的 `.env` 文件。`pull_policy: build` 确保部署时执行构建，未变化的层仍可复用 Docker 缓存。应用和 Redis 的数据分别保存在命名卷中，保留浏览器共享内存、健康检查和 Redis 就绪依赖；更新由 Coolify 管理，不启动 Watchtower。
-
 1. 在 Coolify 通过 GitHub App 或其他 Git 来源新建**仓库应用**，选择要跟踪的分支（例如 `master`）与 Docker Compose 构建方式。Base Directory 设为 `/`，Compose 文件位置设为 `/docker-compose.coolify.yaml`。使用普通 Compose 部署模式，保持 **Raw / deploy file as-is** 关闭。
 2. 在 **Environment Variables** 填写 `API_USERNAME`、`API_PASSWORD`。此文件默认 `API_CREDENTIALS_URL_ENCODED=false`，直接填写明文；若沿用旧版分别 URL 编码的凭据，设置为 `true`。
 3. Coolify 自动生成并复用 `SERVICE_PASSWORD_REDIS`，无需填写普通 Compose 使用的 `REDIS_PASSWORD`。如手动修改，使用仅含字母和数字的密码，保证拼接的 Redis URL 有效。
